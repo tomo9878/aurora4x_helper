@@ -15,7 +15,7 @@ if not exist "%~dp0AuroraDB.db" (
     set /p DB="DB path: "
 )
 
-echo [1/2] Generating dashboard...
+echo [1/3] Generating dashboard (Japanese)...
 py %SCRIPT_DASH% %DB% 2>nul
 if %errorlevel% neq 0 (
     python3 %SCRIPT_DASH% %DB% 2>nul
@@ -25,7 +25,17 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [2/2] Generating mineral viewer...
+echo [2/3] Generating dashboard (English)...
+py %SCRIPT_DASH% --lang en %DB% 2>nul
+if %errorlevel% neq 0 (
+    python3 %SCRIPT_DASH% --lang en %DB% 2>nul
+    if %errorlevel% neq 0 (
+        python %SCRIPT_DASH% --lang en %DB%
+    )
+)
+
+echo.
+echo [3/3] Generating mineral viewer...
 py %SCRIPT_MIN% %DB% 2>nul
 if %errorlevel% neq 0 (
     python3 %SCRIPT_MIN% %DB% 2>nul
@@ -35,6 +45,6 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo Done! Open aurora_dashboard.html and aurora_minerals.html in your browser.
+echo Done! Open aurora_dashboard.html / aurora_dashboard_en.html / aurora_minerals.html in your browser.
 echo.
 pause

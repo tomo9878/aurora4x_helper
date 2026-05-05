@@ -8,12 +8,79 @@ import sqlite3
 import datetime
 import sys
 import os
+import argparse
+
+# ==================== 多言語ラベル ====================
+
+LABELS = {
+    "ja": {
+        "capital": "首都", "needs_maint": "要整備", "paused": "一時停止",
+        "obsolete": "廃止", "support": "支援", "military": "軍用", "civilian": "民間",
+        "geo_survey_badge": "地理調査", "grav_survey_badge": "重力調査",
+        "in_transit": "艦上輸送中", "unassigned": "未配属", "ok": "正常",
+        "all_clear": "全通過", "unexplored": "未通過", "non_combat": "非戦闘",
+        "pop": "人口", "speed": "速度", "cost": "コスト", "crew": "乗員",
+        "fuel": "燃料", "mag": "弾倉", "shield": "シールド",
+        "active": "就役", "hulls": "隻", "no_equip": "装備なし", "slipways_unit": "基",
+        "rp_left": "残", "rp_unit": "RP", "labs": "施設数",
+        "building": "建造中", "shipyard_default": "造船所",
+        "mineral_card": "Mineral Stockpile (首都)",
+        "th_mineral": "鉱物", "th_stock": "在庫", "th_ship": "艦名",
+        "th_class": "クラス", "th_fleet": "艦隊", "th_fuel": "燃料", "th_status": "状態",
+        "th_name": "名称", "th_type": "種別", "th_slipways": "スリップウェイ",
+        "th_maxcap": "最大容量", "th_system": "星系名", "th_discovered": "発見日",
+        "th_grav": "重力探査", "th_geo": "地理探査", "th_jp": "JP通過",
+        "th_minerals": "主要鉱物 Top3",
+        "th_formation": "部隊名", "th_commander": "指揮官", "th_sysname": "星系",
+        "th_location": "配備天体", "th_tonnage": "総重量", "th_police": "警察力",
+        "th_morale": "士気/要塞",
+        "th_count": "数", "th_weight": "重量", "th_armourwpn": "装甲/火力",
+        "th_equip": "装備・能力", "units_unit": "体", "armour": "装甲", "wpn": "火力",
+        "no_research": "研究プロジェクトなし", "no_tasks": "建造タスクなし",
+        "no_ships": "艦船なし", "no_systems": "星系データなし",
+        "no_formations": "部隊データなし",
+        "show_obs": "廃止クラスを表示", "obs_label": "廃止クラス", "obs_unit": "件",
+    },
+    "en": {
+        "capital": "Capital", "needs_maint": "Needs Maint.", "paused": "Paused",
+        "obsolete": "Obsolete", "support": "Support", "military": "Military", "civilian": "Civilian",
+        "geo_survey_badge": "Geo Survey", "grav_survey_badge": "Grav Survey",
+        "in_transit": "In Transit", "unassigned": "Unassigned", "ok": "OK",
+        "all_clear": "All Clear", "unexplored": "Unexplored", "non_combat": "Non-Combat",
+        "pop": "Pop", "speed": "Speed", "cost": "Cost", "crew": "Crew",
+        "fuel": "Fuel", "mag": "Mag", "shield": "Shield",
+        "active": "Active", "hulls": "hulls", "no_equip": "No Equipment", "slipways_unit": "slipways",
+        "rp_left": "Left", "rp_unit": "RP", "labs": "Labs",
+        "building": "Building", "shipyard_default": "Shipyard",
+        "mineral_card": "Mineral Stockpile (Capital)",
+        "th_mineral": "Mineral", "th_stock": "Stock", "th_ship": "Ship",
+        "th_class": "Class", "th_fleet": "Fleet", "th_fuel": "Fuel", "th_status": "Status",
+        "th_name": "Name", "th_type": "Type", "th_slipways": "Slipways",
+        "th_maxcap": "Max Capacity", "th_system": "System", "th_discovered": "Discovered",
+        "th_grav": "Grav Survey", "th_geo": "Geo Survey", "th_jp": "JP Status",
+        "th_minerals": "Top 3 Minerals",
+        "th_formation": "Formation", "th_commander": "Commander", "th_sysname": "System",
+        "th_location": "Location", "th_tonnage": "Tonnage", "th_police": "Police",
+        "th_morale": "Morale/Fort",
+        "th_count": "Count", "th_weight": "Weight", "th_armourwpn": "Armour/Wpn",
+        "th_equip": "Equipment & Capabilities", "units_unit": "units", "armour": "Arm", "wpn": "Wpn",
+        "no_research": "No research projects", "no_tasks": "No construction tasks",
+        "no_ships": "No ships", "no_systems": "No system data",
+        "no_formations": "No formation data",
+        "show_obs": "Show Obsolete Classes", "obs_label": "Obsolete classes", "obs_unit": "",
+    },
+}
+
+_LANG = "ja"
+
+def L(key):
+    return LABELS[_LANG][key]
 
 # ==================== DB接続 ====================
 
-def get_db_path():
-    if len(sys.argv) > 1:
-        return sys.argv[1]
+def get_db_path(db_arg=None):
+    if db_arg:
+        return db_arg
     default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AuroraDB.db")
     if os.path.exists(default):
         return default
@@ -426,7 +493,7 @@ def pct(completed, total):
 
 def _build_army_rows(formations):
     if not formations:
-        return '<tr><td colspan="8" class="empty-note">部隊データなし</td></tr>'
+        return '<tr><td colspan="8" class="empty-note">' + L("no_formations") + '</td></tr>'
 
     COMP_ICON = {
         "Anti-Vehicle": "🔴", "Anti-Personnel": "🟡", "Anti-Aircraft": "🔵",
@@ -446,18 +513,17 @@ def _build_army_rows(formations):
     rows = ""
     for idx, f in enumerate(formations):
         fid = f["FormationID"]
-        kind = '<span class="badge-com">民間</span>' if f["Civilian"] else '<span class="badge-mil">軍用</span>'
+        kind = '<span class="badge-com">' + L("civilian") + '</span>' if f["Civilian"] else '<span class="badge-mil">' + L("military") + '</span>'
         commander = f["CommanderName"] or '—'
         system = f["SystemName"] or "—"
         body = f["BodyName"] or f["PopName"] or "—"
         if f["ShipID"]:
-            body = '<span class="badge-warn">艦上輸送中</span>'
+            body = '<span class="badge-warn">' + L("in_transit") + '</span>'
         tonnage = f'{int(f["total_tonnage"]):,}t'
         police = str(f["police_strength"])
         morale = str(f["morale"])
         fortif = str(f["fortification"])
 
-        # サマリー行（クリックで詳細展開）
         rows += (
             '<tr class="army-row" onclick="toggleArmy(' + str(idx) + ')" style="cursor:pointer">'
             '<td class="army-name">▶ ' + (f["FormationName"] or "—") + '</td>'
@@ -471,7 +537,6 @@ def _build_army_rows(formations):
             '</tr>'
         )
 
-        # 詳細展開行
         elem_rows = ""
         for e in f["elements"]:
             caps = " ".join(
@@ -491,14 +556,14 @@ def _build_army_rows(formations):
                 if e["ShotsB"] and e["ShotsB"] > 0:
                     stats = f' P{e["PenB"]}/D{e["DmgB"]}×{e["ShotsB"]}'
                 comps += '<span class="equip-tag">' + icon + " " + e["CompB"] + stats + '</span>'
-            nc_badge = '<span style="color:var(--text2);font-size:10px"> [非戦闘]</span>' if e["NonCombatClass"] else ""
+            nc_badge = '<span style="color:var(--text2);font-size:10px"> [' + L("non_combat") + ']</span>' if e["NonCombatClass"] else ""
             elem_rows += (
                 '<tr>'
                 '<td style="color:var(--text2);font-size:11px;padding-left:12px">' + e["BaseTypeName"] + nc_badge + '</td>'
                 '<td style="font-family:monospace;font-size:12px">' + e["ClassName"] + '</td>'
-                '<td style="text-align:right;font-size:12px">' + str(e["Units"]) + '体</td>'
-                '<td style="text-align:right;font-size:11px;color:var(--text2)">' + str(e["Size"]) + 't/体</td>'
-                '<td style="font-size:11px;color:var(--text2)">装甲 ' + str(e["ArmourStrengthModifier"]) + ' / 火力 ' + str(e["WeaponStrengthModifier"]) + '</td>'
+                '<td style="text-align:right;font-size:12px">' + str(e["Units"]) + ' ' + L("units_unit") + '</td>'
+                '<td style="text-align:right;font-size:11px;color:var(--text2)">' + str(e["Size"]) + 't</td>'
+                '<td style="font-size:11px;color:var(--text2)">' + L("armour") + ' ' + str(e["ArmourStrengthModifier"]) + ' / ' + L("wpn") + ' ' + str(e["WeaponStrengthModifier"]) + '</td>'
                 '<td colspan="3" style="font-size:11px">' + comps + caps + '</td>'
                 '</tr>'
             )
@@ -508,12 +573,12 @@ def _build_army_rows(formations):
             '<td colspan="8" style="padding:0;background:var(--bg)">'
             '<table style="width:100%;margin:4px 0;border-collapse:collapse">'
             '<thead><tr style="background:var(--bg3)">'
-            '<th style="font-size:10px;padding:4px 8px;text-align:left">種別</th>'
-            '<th style="font-size:10px;padding:4px 8px;text-align:left">クラス</th>'
-            '<th style="font-size:10px;padding:4px 8px;text-align:right">数</th>'
-            '<th style="font-size:10px;padding:4px 8px;text-align:right">重量</th>'
-            '<th style="font-size:10px;padding:4px 8px">装甲/火力</th>'
-            '<th colspan="3" style="font-size:10px;padding:4px 8px">装備・能力</th>'
+            '<th style="font-size:10px;padding:4px 8px;text-align:left">' + L("th_type") + '</th>'
+            '<th style="font-size:10px;padding:4px 8px;text-align:left">' + L("th_class") + '</th>'
+            '<th style="font-size:10px;padding:4px 8px;text-align:right">' + L("th_count") + '</th>'
+            '<th style="font-size:10px;padding:4px 8px;text-align:right">' + L("th_weight") + '</th>'
+            '<th style="font-size:10px;padding:4px 8px">' + L("th_armourwpn") + '</th>'
+            '<th colspan="3" style="font-size:10px;padding:4px 8px">' + L("th_equip") + '</th>'
             '</tr></thead>'
             '<tbody>' + elem_rows + '</tbody>'
             '</table>'
@@ -533,11 +598,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     pop_cards = ""
     for p in pops:
         pop_m = round(p["Population"])
-        badge = '<span class="badge-cap">首都</span>' if p["Capital"] else ""
+        badge = '<span class="badge-cap">' + L("capital") + '</span>' if p["Capital"] else ""
         pop_cards += (
             '<div class="pop-card">'
             '<div class="pop-name">' + p["PopName"] + " " + badge + '</div>'
-            '<div class="pop-detail">人口 ' + f'{pop_m:,}' + 'M</div>'
+            '<div class="pop-detail">' + L("pop") + ' ' + f'{pop_m:,}' + 'M</div>'
             '</div>'
         )
 
@@ -590,21 +655,21 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             '<div class="research-item">'
             '<div class="research-header">'
             '<span class="research-name">' + name + '</span>'
-            '<span class="research-pts">残 ' + f'{pts:,}' + ' RP &nbsp;|&nbsp; 施設数 ' + str(fac) + '</span>'
+            '<span class="research-pts">' + L("rp_left") + ' ' + f'{pts:,}' + ' ' + L("rp_unit") + ' &nbsp;|&nbsp; ' + L("labs") + ' ' + str(fac) + '</span>'
             '</div>'
             '<div class="bar-track"><div class="bar-fill" style="width:' + str(bar_w) + '%;background:' + color + '"></div></div>'
             '</div>'
         )
     if not research_items:
-        research_items = '<div class="empty-note">研究プロジェクトなし</div>'
+        research_items = '<div class="empty-note">' + L("no_research") + '</div>'
 
     # --- 造船タスク ---
     task_items = ""
     for t in tasks:
         p = pct(t["CompletedBP"], t["TotalBP"])
-        name = t["UnitName"] or "建造中"
-        sy = t["ShipyardName"] or "造船所"
-        paused = '<span class="badge-warn">一時停止</span>' if t["Paused"] else ""
+        name = t["UnitName"] or L("building")
+        sy = t["ShipyardName"] or L("shipyard_default")
+        paused = '<span class="badge-warn">' + L("paused") + '</span>' if t["Paused"] else ""
         task_items += (
             '<div class="task-item">'
             '<div class="task-header">'
@@ -616,17 +681,17 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             '</div>'
         )
     if not task_items:
-        task_items = '<div class="empty-note">建造タスクなし</div>'
+        task_items = '<div class="empty-note">' + L("no_tasks") + '</div>'
 
     # --- 造船所 ---
     sy_rows = ""
     for sy in shipyards:
-        sy_type = "民間" if sy["SYType"] == 2 else "軍用"
+        sy_type = L("civilian") if sy["SYType"] == 2 else L("military")
         sy_rows += (
             '<tr>'
             '<td>' + sy["ShipyardName"] + '</td>'
             '<td>' + sy_type + '</td>'
-            '<td>' + str(int(sy["Slipways"])) + '基</td>'
+            '<td>' + str(int(sy["Slipways"])) + ' ' + L("slipways_unit") + '</td>'
             '<td>' + f'{int(sy["Capacity"]):,}' + ' t</td>'
             '</tr>'
         )
@@ -635,10 +700,10 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     fleet_map = {f["FleetID"]: f["FleetName"] for f in fleets}
     ship_rows = ""
     for s in ships:
-        fleet_name = fleet_map.get(s["FleetID"], "未配属")
+        fleet_name = fleet_map.get(s["FleetID"], L("unassigned"))
         fuel = round(s["Fuel"])
         maint = s["MaintenanceState"]
-        status = '<span class="badge-warn">要整備</span>' if maint and maint > 0 else "正常"
+        status = '<span class="badge-warn">' + L("needs_maint") + '</span>' if maint and maint > 0 else L("ok")
         ship_rows += (
             '<tr>'
             '<td>' + s["ShipName"] + '</td>'
@@ -649,7 +714,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             '</tr>'
         )
     if not ship_rows:
-        ship_rows = '<tr><td colspan="5" class="empty-note">艦船なし</td></tr>'
+        ship_rows = '<tr><td colspan="5" class="empty-note">' + L("no_ships") + '</td></tr>'
 
     # --- 星系テーブル ---
     sys_rows = ""
@@ -666,9 +731,9 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         if not s["SurveyDone"]:
             jp_str = "—"
         elif jp_unex > 0:
-            jp_str = '<span class="badge-warn">' + str(jp_unex) + ' 未通過</span>'
+            jp_str = '<span class="badge-warn">' + str(jp_unex) + ' ' + L("unexplored") + '</span>'
         else:
-            jp_str = '<span style="color:#00ff9d">全通過</span>'
+            jp_str = '<span style="color:#00ff9d">' + L("all_clear") + '</span>'
         mins = s["minerals"]
         top3 = sorted(mins.items(), key=lambda x: x[1], reverse=True)[:3]
         min_str = " / ".join(MINERAL_NAMES.get(mid, "?") + " " + f"{amt:,}" for mid, amt in top3) if top3 else "—"
@@ -684,7 +749,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             '</tr>'
         )
     if not sys_rows:
-        sys_rows = '<tr><td colspan="6" class="empty-note">星系データなし</td></tr>'
+        sys_rows = '<tr><td colspan="6" class="empty-note">' + L("no_systems") + '</td></tr>'
 
     # --- 設計書タブ ---
     WEAPON_CATS = {2, 3, 26, 28, 39, 40}
@@ -716,31 +781,31 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 
         badges = ""
         if obs:
-            badges += '<span class="design-badge badge-obs">廃止</span>'
+            badges += '<span class="design-badge badge-obs">' + L("obsolete") + '</span>'
         if mil and com:
-            badges += '<span class="design-badge badge-sup">支援</span>'
+            badges += '<span class="design-badge badge-sup">' + L("support") + '</span>'
         elif mil:
-            badges += '<span class="design-badge badge-mil">軍用</span>'
+            badges += '<span class="design-badge badge-mil">' + L("military") + '</span>'
         elif com:
-            badges += '<span class="design-badge badge-com">民間</span>'
+            badges += '<span class="design-badge badge-com">' + L("civilian") + '</span>'
         if geo:
-            badges += '<span class="design-badge" style="color:#f39c12;border-color:#f39c12;background:#1a1000">地理調査</span>'
+            badges += '<span class="design-badge" style="color:#f39c12;border-color:#f39c12;background:#1a1000">' + L("geo_survey_badge") + '</span>'
         if grav:
-            badges += '<span class="design-badge" style="color:#f39c12;border-color:#f39c12;background:#1a1000">重力調査</span>'
+            badges += '<span class="design-badge" style="color:#f39c12;border-color:#f39c12;background:#1a1000">' + L("grav_survey_badge") + '</span>'
 
         stats = (
             '<span><b>' + str(size_hs) + '</b> HS</span>'
-            '<span>速度 <b>' + f'{speed:,}' + '</b> km/s</span>'
-            '<span>コスト <b>' + f'{cost:,}' + '</b></span>'
-            '<span>乗員 <b>' + str(crew) + '</b></span>'
-            '<span>燃料 <b>' + f'{fuel:,}' + '</b> L</span>'
+            '<span>' + L("speed") + ' <b>' + f'{speed:,}' + '</b> km/s</span>'
+            '<span>' + L("cost") + ' <b>' + f'{cost:,}' + '</b></span>'
+            '<span>' + L("crew") + ' <b>' + str(crew) + '</b></span>'
+            '<span>' + L("fuel") + ' <b>' + f'{fuel:,}' + '</b> L</span>'
         )
         if mag > 0:
-            stats += '<span>弾倉 <b>' + str(mag) + '</b></span>'
+            stats += '<span>' + L("mag") + ' <b>' + str(mag) + '</b></span>'
         if shield > 0:
-            stats += '<span>シールド <b>' + str(shield) + '</b></span>'
+            stats += '<span>' + L("shield") + ' <b>' + str(shield) + '</b></span>'
         if total > 0:
-            stats += '<span>就役 <b>' + str(total) + '</b> 隻</span>'
+            stats += '<span>' + L("active") + ' <b>' + str(total) + '</b> ' + L("hulls") + '</span>'
 
         equip_tags = ""
         for e in cls["engines"]:
@@ -756,7 +821,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             equip_tags += '<span class="equip-tag ' + ec + '">×' + str(n) + ' ' + (s["Name"] or "?") + '</span>'
 
         if not equip_tags:
-            equip_tags = '<span class="equip-tag">装備なし</span>'
+            equip_tags = '<span class="equip-tag">' + L("no_equip") + '</span>'
 
         card = (
             '<div class="design-card' + (' obsolete' if obs else '') + '">' 
@@ -855,7 +920,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 
     html_parts = [
         '<!DOCTYPE html>',
-        '<html lang="ja">',
+        '<html lang="' + _LANG + '">',
         '<head>',
         '<meta charset="UTF-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
@@ -898,11 +963,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '</div>',
 
         '<div class="two-col">',
-        '<div class="card"><div class="card-title">Mineral Stockpile (首都)</div><table><thead><tr><th>鉱物</th><th>在庫</th><th></th></tr></thead><tbody>' + mineral_rows + '</tbody></table></div>',
-        '<div class="card"><div class="card-title">Active Ships</div><table><thead><tr><th>艦名</th><th>クラス</th><th>艦隊</th><th>燃料</th><th>状態</th></tr></thead><tbody>' + ship_rows + '</tbody></table></div>',
+        '<div class="card"><div class="card-title">' + L("mineral_card") + '</div><table><thead><tr><th>' + L("th_mineral") + '</th><th>' + L("th_stock") + '</th><th></th></tr></thead><tbody>' + mineral_rows + '</tbody></table></div>',
+        '<div class="card"><div class="card-title">Active Ships</div><table><thead><tr><th>' + L("th_ship") + '</th><th>' + L("th_class") + '</th><th>' + L("th_fleet") + '</th><th>' + L("th_fuel") + '</th><th>' + L("th_status") + '</th></tr></thead><tbody>' + ship_rows + '</tbody></table></div>',
         '</div>',
 
-        '<div class="card"><div class="card-title">Shipyards</div><table><thead><tr><th>名称</th><th>種別</th><th>スリップウェイ</th><th>最大容量</th></tr></thead><tbody>' + sy_rows + '</tbody></table></div>',
+        '<div class="card"><div class="card-title">Shipyards</div><table><thead><tr><th>' + L("th_name") + '</th><th>' + L("th_type") + '</th><th>' + L("th_slipways") + '</th><th>' + L("th_maxcap") + '</th></tr></thead><tbody>' + sy_rows + '</tbody></table></div>',
 
         '</div>',  # /tab-main
 
@@ -910,7 +975,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div id="tab-systems" class="tab-panel">',
         '<div class="card"><div class="card-title">Discovered Systems</div>',
         '<div style="overflow-x:auto">',
-        '<table><thead><tr><th>星系名</th><th>発見日</th><th>重力探査</th><th>地理探査</th><th>JP通過</th><th>主要鉱物 Top3</th></tr></thead>',
+        '<table><thead><tr><th>' + L("th_system") + '</th><th>' + L("th_discovered") + '</th><th>' + L("th_grav") + '</th><th>' + L("th_geo") + '</th><th>' + L("th_jp") + '</th><th>' + L("th_minerals") + '</th></tr></thead>',
         '<tbody>' + sys_rows + '</tbody></table>',
         '</div></div>',
         '</div>',  # /tab-systems
@@ -920,8 +985,8 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div class="card"><div class="card-title">Ground Forces</div>',
         '<div style="overflow-x:auto">',
         '<table><thead><tr>'
-        '<th>部隊名</th><th>種別</th><th>指揮官</th><th>星系</th><th>配備天体</th>'
-        '<th style="text-align:right">総重量</th><th style="text-align:right">警察力</th><th style="text-align:center">士気/要塞</th>'
+        '<th>' + L("th_formation") + '</th><th>' + L("th_type") + '</th><th>' + L("th_commander") + '</th><th>' + L("th_sysname") + '</th><th>' + L("th_location") + '</th>'
+        '<th style="text-align:right">' + L("th_tonnage") + '</th><th style="text-align:right">' + L("th_police") + '</th><th style="text-align:center">' + L("th_morale") + '</th>'
         '</tr></thead>',
         '<tbody>' + _build_army_rows(ground_formations) + '</tbody></table>',
         '</div>',
@@ -933,7 +998,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div class="card">',
         '<div class="card-title">Ship Designs</div>',
         '<div class="designs-controls">',
-        '<label><input type="checkbox" id="show-obs" onchange="toggleObs()"> 廃止クラスを表示</label>',
+        '<label><input type="checkbox" id="show-obs" onchange="toggleObs()"> ' + L("show_obs") + '</label>',
         '<span style="font-size:11px;color:var(--text2)" id="obs-count"></span>',
         '</div>',
         '<div id="designs-active">' + design_cards_active + '</div>',
@@ -962,7 +1027,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '}',
         '(function(){',
         'var n=document.getElementById("designs-obs").children.length;',
-        'document.getElementById("obs-count").textContent="廃止クラス "+n+"件";',
+        'document.getElementById("obs-count").textContent="' + L("obs_label") + ' "+n+"' + L("obs_unit") + '";',
         '})();',
         '</script>',
 
@@ -976,7 +1041,14 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 # ==================== メイン ====================
 
 def main():
-    db_path = get_db_path()
+    global _LANG
+    parser = argparse.ArgumentParser(description="Aurora 4x Dashboard Generator")
+    parser.add_argument("--lang", choices=["ja", "en"], default="ja", help="Output language (default: ja)")
+    parser.add_argument("db", nargs="?", default=None, help="Path to AuroraDB.db")
+    args = parser.parse_args()
+    _LANG = args.lang
+
+    db_path = get_db_path(args.db)
     print("DB: " + db_path)
 
     conn = connect(db_path)
@@ -1029,7 +1101,8 @@ def main():
     logs = get_gamelog(conn, game_id, race_id, last_time, last_inc)
     conn.close()
 
-    html_path = os.path.join(base_dir, "aurora_dashboard.html")
+    html_filename = "aurora_dashboard_en.html" if _LANG == "en" else "aurora_dashboard.html"
+    html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
     html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot)
