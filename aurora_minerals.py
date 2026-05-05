@@ -270,7 +270,54 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
     .footer { margin-top: 20px; font-size: 11px; color: var(--text2); text-align: right; }
     """
 
+    mineral_names_js = str([MINERAL_NAMES[i] for i in range(1, 12)])
+
     js = """
+    const MINERAL_NAMES = """ + mineral_names_js + """;
+
+    function exportCSV() {
+      const mineralCols = MINERAL_NAMES.length;
+      // ヘッダー行
+      const headers = ['System', 'Body', 'Orbital'];
+      for (const m of MINERAL_NAMES) {
+        headers.push(m + '_Amount');
+        headers.push(m + '_Acc');
+      }
+
+      const csvRows = [headers.join(',')];
+
+      // 表示中の行のみ
+      Array.from(document.getElementById('tbody').querySelectorAll('tr')).forEach(row => {
+        if (row.style.display === 'none') return;
+        const cells = row.cells;
+        const system = cells[0].textContent.trim();
+        const body   = '"' + cells[1].textContent.trim().replace(/"/g, '""') + '"';
+        const orbital = cells[2].textContent.trim() === '⛏' ? '1' : '0';
+        const cols = [system, body, orbital];
+        for (let ci = 3; ci < cells.length; ci++) {
+          const amtEl = cells[ci].querySelector('.min-amount');
+          const accEl = cells[ci].querySelector('.min-acc');
+          if (amtEl) {
+            cols.push(amtEl.textContent.replace(/,/g, ''));
+            cols.push(accEl ? accEl.getAttribute('data-orig') || accEl.textContent.trim() : '');
+          } else {
+            cols.push(''); cols.push('');
+          }
+        }
+        csvRows.push(cols.join(','));
+      });
+
+      const bom = '﻿';  // Excel用BOM
+      const blob = new Blob([bom + csvRows.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const sys = document.getElementById('system-filter').value || 'all';
+      a.href = url;
+      a.download = 'aurora_minerals_' + sys + '.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
     const tbody = document.getElementById('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
     let sortCol = -1, sortDir = 1;
@@ -380,6 +427,7 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '<label>自動鉱山 <input type="number" id="mine-count" value="10" min="1" max="9999"> 台</label>'
         '<button onclick="calcMining()" style="background:#1a3a4a;color:var(--accent);border:1px solid var(--accent);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">全資源計算</button>'
         '<button onclick="resetMining()" style="background:#1a1a1a;color:var(--text2);border:1px solid var(--border);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">リセット</button>'
+        '<button onclick="exportCSV()" style="background:#1a2a1a;color:#00ff9d;border:1px solid #00ff9d;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">CSV出力</button>'
         '<span class="mine-result">採掘レート: ' + str(mining_rate) + ' tons / 年</span>'
         '</div>'
         '<div class="table-wrap">'
@@ -423,7 +471,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print("\n✅ 出力: " + out_path)
+    print("\n[OK] 出力: " + out_path)
     print("完了！ブラウザで aurora_minerals.html を開いてください。")
 
 if __name__ == "__main__":
