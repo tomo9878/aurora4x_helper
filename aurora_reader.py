@@ -1082,7 +1082,9 @@ def main():
     print("帝国: " + race["RaceName"] + " (ID:" + str(race_id) + ")")
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    snapshot     = load_mineral_snapshot(base_dir)
+    # EN run is HTML-only; state files (log pos, snapshot) are managed by the JA run
+    is_primary = (_LANG == "ja")
+    snapshot     = load_mineral_snapshot(base_dir) if is_primary else None
     systems      = get_systems(conn, game_id, race_id)
     ship_classes  = get_ship_classes(conn, game_id, race_id)
     research     = get_research(conn, game_id, race_id)
@@ -1094,11 +1096,11 @@ def main():
     unexplored   = get_unexplored_jp(conn, game_id, race_id)
     ground       = get_ground_formations(conn, game_id, race_id)
 
-    # 前回の最終ログ位置を読み込み
-    last_time, last_inc = load_last_log_pos(base_dir)
-    is_first = last_time is None
-
-    logs = get_gamelog(conn, game_id, race_id, last_time, last_inc)
+    # 前回の最終ログ位置を読み込み（JA実行のみ）
+    if is_primary:
+        last_time, last_inc = load_last_log_pos(base_dir)
+        is_first = last_time is None
+        logs = get_gamelog(conn, game_id, race_id, last_time, last_inc)
     conn.close()
 
     html_filename = "aurora_dashboard_en.html" if _LANG == "en" else "aurora_dashboard.html"
@@ -1106,10 +1108,14 @@ def main():
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
     html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot)
-    save_mineral_snapshot(base_dir, pops, game["GameTime"])
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
-    print("\n✅ ダッシュボード: " + html_path)
+    print("\n[OK] ダッシュボード: " + html_path)
+
+    if not is_primary:
+        return
+
+    save_mineral_snapshot(base_dir, pops, game["GameTime"])
 
     diff_path = os.path.join(base_dir, "aurora_gamelog_diff.txt")
 
@@ -1123,16 +1129,16 @@ def main():
             if not is_first:
                 f.write("\n\n")
             f.write(log_text)
-        print("✅ 全ログ:         " + log_path + " (" + label + " " + str(len(logs)) + "件追加)")
+        print("[OK] 全ログ:         " + log_path + " (" + label + " " + str(len(logs)) + "件追加)")
 
         # 差分のみ（AAR投げ用）
         with open(diff_path, "w", encoding="utf-8") as f:
             f.write(log_text)
-        print("✅ 差分ログ:       " + diff_path + " (" + str(len(logs)) + "件)")
+        print("[OK] 差分ログ:       " + diff_path + " (" + str(len(logs)) + "件)")
 
         save_last_log_pos(base_dir, logs)
     else:
-        print("✅ ログ:           新規ログなし (前回以降の更新なし)")
+        print("[OK] ログ:           新規ログなし (前回以降の更新なし)")
         # 差分ファイルは空にしておく
         with open(diff_path, "w", encoding="utf-8") as f:
             f.write("# No new events since last run.")
