@@ -437,26 +437,28 @@ def get_ground_formations(conn, game_id, race_id):
         f["fortification"] = fortif if fortif is not None else "—"
     return formations
 
-def load_last_log_pos(base_dir):
-    """前回の最終ログ位置を読み込む (Time, IncrementID)"""
+def load_last_log_pos(base_dir, game_id):
+    """前回の最終ログ位置を読み込む (Time, IncrementID)。ゲームIDが変わったらリセット"""
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
     if not os.path.exists(pos_path):
         return None, None
     try:
         with open(pos_path, "r", encoding="utf-8") as f:
             parts = f.read().strip().split(",")
-            return float(parts[0]), int(parts[1])
+            if int(parts[0]) != game_id:
+                return None, None  # 別ゲームのデータなので初回扱い
+            return float(parts[1]), int(parts[2])
     except Exception:
         return None, None
 
-def save_last_log_pos(base_dir, logs):
+def save_last_log_pos(base_dir, game_id, logs):
     """最終ログ位置を保存"""
     if not logs:
         return
     last = logs[-1]
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
     with open(pos_path, "w", encoding="utf-8") as f:
-        f.write(str(last["Time"]) + "," + str(last["IncrementID"]))
+        f.write(str(game_id) + "," + str(last["Time"]) + "," + str(last["IncrementID"]))
 
 # ==================== テキスト生成 ====================
 
@@ -1098,7 +1100,7 @@ def main():
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
-        last_time, last_inc = load_last_log_pos(base_dir)
+        last_time, last_inc = load_last_log_pos(base_dir, game_id)
         is_first = last_time is None
         logs = get_gamelog(conn, game_id, race_id, last_time, last_inc)
     conn.close()
@@ -1136,7 +1138,7 @@ def main():
             f.write(log_text)
         print("[OK] 差分ログ:       " + diff_path + " (" + str(len(logs)) + "件)")
 
-        save_last_log_pos(base_dir, logs)
+        save_last_log_pos(base_dir, game_id, logs)
     else:
         print("[OK] ログ:           新規ログなし (前回以降の更新なし)")
         # 差分ファイルは空にしておく
