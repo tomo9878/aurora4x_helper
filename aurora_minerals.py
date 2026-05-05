@@ -268,90 +268,9 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
     .orbital-ok { text-align: center; color: #00ff9d; font-size: 14px; }
     .orbital-no { text-align: center; color: var(--text2); }
     .footer { margin-top: 20px; font-size: 11px; color: var(--text2); text-align: right; }
-
-    #csv-modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75);
-      z-index:1000; align-items:center; justify-content:center; }
-    .csv-dialog { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
-      padding:20px; width:min(800px,90vw); display:flex; flex-direction:column; gap:10px; }
-    .csv-dialog h2 { font-family:'Share Tech Mono',monospace; font-size:13px;
-      color:var(--accent); letter-spacing:1px; }
-    .csv-dialog .csv-hint { font-size:11px; color:var(--text2); }
-    #csv-text { width:100%; height:260px; background:var(--bg3); color:var(--text);
-      border:1px solid var(--border); border-radius:4px; padding:8px;
-      font-family:'Share Tech Mono',monospace; font-size:11px; resize:vertical; }
-    .csv-btns { display:flex; gap:8px; justify-content:flex-end; }
-    .csv-btns button { padding:5px 14px; border-radius:4px; cursor:pointer; font-size:12px; border:1px solid; }
     """
 
-    mineral_names_js = str([MINERAL_NAMES[i] for i in range(1, 12)])
-
     js = """
-    const MINERAL_NAMES = """ + mineral_names_js + """;
-
-    function buildCSV() {
-      const headers = ['System', 'Body', 'Orbital'];
-      for (const m of MINERAL_NAMES) { headers.push(m + '_Amount'); headers.push(m + '_Acc'); }
-      const csvRows = [headers.join(',')];
-      Array.from(document.getElementById('tbody').querySelectorAll('tr')).forEach(row => {
-        if (row.style.display === 'none') return;
-        const cells = row.cells;
-        const system = cells[0].textContent.trim();
-        const body   = '"' + cells[1].textContent.trim().replace(/"/g, '""') + '"';
-        const orbital = cells[2].textContent.trim() === '⛏' ? '1' : '0';
-        const cols = [system, body, orbital];
-        for (let ci = 3; ci < cells.length; ci++) {
-          const amtEl = cells[ci].querySelector('.min-amount');
-          const accEl = cells[ci].querySelector('.min-acc');
-          if (amtEl) {
-            cols.push(amtEl.textContent.replace(/,/g, ''));
-            cols.push(accEl ? (accEl.getAttribute('data-orig') || accEl.textContent.trim()) : '');
-          } else { cols.push(''); cols.push(''); }
-        }
-        csvRows.push(cols.join(','));
-      });
-      return csvRows.join('\r\n');
-    }
-
-    function exportCSV() {
-      const csv = buildCSV();
-      const sys = document.getElementById('system-filter').value || 'all';
-      const filename = 'aurora_minerals_' + sys + '.csv';
-
-      // 方法1: data URI ダウンロード
-      try {
-        const bom = '﻿';
-        const uri = 'data:text/csv;charset=utf-8,' + encodeURIComponent(bom + csv);
-        const a = document.createElement('a');
-        a.href = uri;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } catch(e) {}
-
-      // 方法2: モーダルにテキスト表示（コピペ用フォールバック）
-      showCsvModal(csv, filename);
-    }
-
-    function showCsvModal(csv, filename) {
-      document.getElementById('csv-modal').style.display = 'flex';
-      document.getElementById('csv-text').value = csv;
-      document.getElementById('csv-filename').textContent = filename;
-    }
-
-    function closeCsvModal() {
-      document.getElementById('csv-modal').style.display = 'none';
-    }
-
-    function copyCsv() {
-      const ta = document.getElementById('csv-text');
-      ta.select();
-      document.execCommand('copy');
-      const btn = document.getElementById('copy-btn');
-      btn.textContent = 'コピー済み!';
-      setTimeout(() => btn.textContent = 'クリップボードにコピー', 1500);
-    }
-
     const tbody = document.getElementById('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
     let sortCol = -1, sortDir = 1;
@@ -461,7 +380,6 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '<label>自動鉱山 <input type="number" id="mine-count" value="10" min="1" max="9999"> 台</label>'
         '<button onclick="calcMining()" style="background:#1a3a4a;color:var(--accent);border:1px solid var(--accent);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">全資源計算</button>'
         '<button onclick="resetMining()" style="background:#1a1a1a;color:var(--text2);border:1px solid var(--border);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">リセット</button>'
-        '<button onclick="exportCSV()" style="background:#1a2a1a;color:#00ff9d;border:1px solid #00ff9d;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">CSV出力</button>'
         '<span class="mine-result">採掘レート: ' + str(mining_rate) + ' tons / 年</span>'
         '</div>'
         '<div class="table-wrap">'
@@ -473,18 +391,6 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '<tbody id="tbody">' + rows_html + '</tbody>'
         '</table></div>'
         '<div class="footer">Aurora 4x Mineral Viewer &mdash; ' + generated_at + '</div>'
-        '<div id="csv-modal">'
-        '<div class="csv-dialog">'
-        '<h2>CSV EXPORT</h2>'
-        '<div class="csv-hint">ファイル名: <span id="csv-filename"></span>'
-        '&nbsp;&nbsp;ダウンロードされない場合は以下をコピーしてください</div>'
-        '<textarea id="csv-text" readonly></textarea>'
-        '<div class="csv-btns">'
-        '<button id="copy-btn" onclick="copyCsv()" style="background:#1a2a1a;color:#00ff9d;border-color:#00ff9d">クリップボードにコピー</button>'
-        '<button onclick="closeCsvModal()" style="background:#1a1a1a;color:var(--text2);border-color:var(--border)">閉じる</button>'
-        '</div>'
-        '</div>'
-        '</div>'
         '<script>' + js + '</script>'
         '</body></html>'
     )
@@ -517,7 +423,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print("\n[OK] 出力: " + out_path)
+    print("\n✅ 出力: " + out_path)
     print("完了！ブラウザで aurora_minerals.html を開いてください。")
 
 if __name__ == "__main__":
