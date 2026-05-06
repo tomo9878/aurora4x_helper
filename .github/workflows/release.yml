@@ -16,12 +16,13 @@ jobs:
 
       - name: Create zip archive
         run: |
-          zip aurora4x_tools.zip \
+          zip -r aurora4x_tools.zip \
             aurora_reader.py \
             aurora_minerals.py \
             aurora_reader.bat \
             aurora_reader_en.bat \
-            README.md
+            README.md \
+            extras/
 
       - name: Delete existing latest release/tag
         run: |
