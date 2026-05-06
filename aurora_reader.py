@@ -40,6 +40,10 @@ LABELS = {
         "no_ships": "艦船なし", "no_systems": "星系データなし",
         "no_formations": "部隊データなし",
         "show_obs": "廃止クラスを表示", "obs_label": "廃止クラス", "obs_unit": "件",
+        "colony_candidates": "有望な入植候補 (コスト < 3.0)",
+        "th_body": "天体名", "th_colony_cost": "入植コスト",
+        "th_temp_c": "表面温度", "cost_exact": "実測", "cost_est": "概算",
+        "no_candidates": "なし",
     },
     "en": {
         "capital": "Capital", "needs_maint": "Needs Maint.", "paused": "Paused",
@@ -68,6 +72,10 @@ LABELS = {
         "no_ships": "No ships", "no_systems": "No system data",
         "no_formations": "No formation data",
         "show_obs": "Show Obsolete Classes", "obs_label": "Obsolete classes", "obs_unit": "",
+        "colony_candidates": "Colony Candidates (Cost < 3.0)",
+        "th_body": "Body", "th_colony_cost": "Col. Cost",
+        "th_temp_c": "Surf. Temp", "cost_exact": "exact", "cost_est": "est.",
+        "no_candidates": "None",
     },
 }
 
@@ -331,6 +339,140 @@ def get_systems(conn, game_id, race_id):
         s["minerals"] = mineral_map.get(sid, {})
     return systems
 
+def calc_colony_cost_approx(temp, grav, press, gases, sp):
+    """Approximate colony cost from physical parameters (not exact Aurora formula)."""
+    temp_excess = max(0.0, abs(temp - sp["Temperature"]) - sp["TempDev"])
+    grav_excess = max(0.0, abs(grav - sp["Gravity"]) - sp["GravDev"])
+
+    breathe_id = sp["BreatheID"]
+    breathe_atm = gases.get(breathe_id, {}).get("atm", 0.0)
+    o2_min = max(0.0, sp["Oxygen"] - sp["OxyDev"])
+    o2_max = sp["Oxygen"] + sp["OxyDev"]
+    o2_ok = o2_min <= breathe_atm <= o2_max
+    press_max = sp["PressMax"] or 10.0
+
+    temp_cost = temp_excess * 0.01
+    grav_cost = grav_excess * 23.0
+    atmos_cost = 0.0
+    if not o2_ok:
+        atmos_cost = 2.0
+    if press > press_max:
+        atmos_cost += (press - press_max) * 1.0
+
+    total = temp_cost + grav_cost + atmos_cost
+    if total > 0.0:
+        total = max(2.0, total)
+    return round(total, 2)
+
+
+def get_colony_candidates(conn, game_id, race_id):
+    """
+    Returns promising colonization candidates with colony cost < 3.0, grouped by system.
+    Existing colonies use exact LastColonyCost; uninhabited geo-surveyed bodies use approx.
+    """
+    cur = conn.cursor()
+
+    # Primary species for this race (from capital colony)
+    cur.execute("""
+        SELECT s.BreatheID, s.Oxygen, s.OxyDev, s.PressMax,
+               s.Temperature, s.TempDev, s.Gravity, s.GravDev
+        FROM FCT_Species s
+        JOIN FCT_Population p ON p.SpeciesID = s.SpeciesID AND p.GameID = s.GameID
+        WHERE p.GameID = ? AND p.RaceID = ? AND p.Capital = 1
+        LIMIT 1
+    """, (game_id, race_id))
+    sp_row = cur.fetchone()
+    if not sp_row:
+        cur.execute("""
+            SELECT DISTINCT s.BreatheID, s.Oxygen, s.OxyDev, s.PressMax,
+                   s.Temperature, s.TempDev, s.Gravity, s.GravDev
+            FROM FCT_Species s
+            JOIN FCT_Population p ON p.SpeciesID = s.SpeciesID AND p.GameID = s.GameID
+            WHERE p.GameID = ? AND p.RaceID = ?
+            LIMIT 1
+        """, (game_id, race_id))
+        sp_row = cur.fetchone()
+    if not sp_row:
+        return []
+    sp = dict(sp_row)
+
+    # System name map
+    cur.execute("SELECT SystemID, Name FROM FCT_RaceSysSurvey WHERE GameID=? AND RaceID=?", (game_id, race_id))
+    sys_name_map = {r["SystemID"]: r["Name"] for r in cur.fetchall()}
+    known_sys = list(sys_name_map.keys())
+    if not known_sys:
+        return []
+
+    results = []
+
+    # 1. Existing colonies with exact cost (cost > 0 and < 3, skip homeworld)
+    cur.execute("""
+        SELECT p.PopName, p.LastColonyCost, p.SystemBodyID, p.SystemID
+        FROM FCT_Population p
+        WHERE p.GameID=? AND p.RaceID=? AND p.LastColonyCost > 0.0 AND p.LastColonyCost < 3.0
+    """, (game_id, race_id))
+    for r in cur.fetchall():
+        results.append({
+            "system": sys_name_map.get(r["SystemID"], "?"),
+            "system_id": r["SystemID"],
+            "body": r["PopName"],
+            "cost": r["LastColonyCost"],
+            "temp_c": None,
+            "grav": None,
+            "exact": True,
+        })
+
+    # 2. Geo-surveyed uninhabited bodies
+    ph = ",".join("?" * len(known_sys))
+    cur.execute(f"""
+        SELECT sb.SystemBodyID, sb.SystemID, sb.Name,
+               sb.SurfaceTemp, sb.Gravity, sb.AtmosPress
+        FROM FCT_SystemBody sb
+        JOIN FCT_SystemBodySurveys sbs ON sb.SystemBodyID=sbs.SystemBodyID
+            AND sbs.GameID=? AND sbs.RaceID=?
+        LEFT JOIN FCT_Population p ON p.SystemBodyID=sb.SystemBodyID AND p.GameID=?
+        WHERE sb.GameID=? AND sb.SystemID IN ({ph})
+          AND p.SystemBodyID IS NULL
+    """, [game_id, race_id, game_id, game_id] + known_sys)
+    uninhabited = [dict(r) for r in cur.fetchall()]
+
+    if uninhabited:
+        body_ids = [b["SystemBodyID"] for b in uninhabited]
+        ph2 = ",".join("?" * len(body_ids))
+        cur.execute(f"""
+            SELECT ag.SystemBodyID, ag.AtmosGasID, ag.GasAtm,
+                   g.Dangerous, g.DangerousLevel
+            FROM FCT_AtmosphericGas ag
+            JOIN DIM_Gases g ON g.GasID=ag.AtmosGasID
+            WHERE ag.GameID=? AND ag.SystemBodyID IN ({ph2})
+        """, [game_id] + body_ids)
+        gas_map = {}
+        for r in cur.fetchall():
+            bid = r["SystemBodyID"]
+            if bid not in gas_map:
+                gas_map[bid] = {}
+            gas_map[bid][r["AtmosGasID"]] = {"atm": r["GasAtm"], "dangerous": r["Dangerous"]}
+
+        for body in uninhabited:
+            cost = calc_colony_cost_approx(
+                body["SurfaceTemp"], body["Gravity"], body["AtmosPress"],
+                gas_map.get(body["SystemBodyID"], {}), sp
+            )
+            if cost < 3.0:
+                results.append({
+                    "system": sys_name_map.get(body["SystemID"], "?"),
+                    "system_id": body["SystemID"],
+                    "body": body["Name"] or ("Body #" + str(body["SystemBodyID"])),
+                    "cost": cost,
+                    "temp_c": round(body["SurfaceTemp"] - 273.15, 1),
+                    "grav": round(body["Gravity"], 2),
+                    "exact": False,
+                })
+
+    results.sort(key=lambda x: (x["system"], x["cost"]))
+    return results
+
+
 def get_gamelog(conn, game_id, race_id, after_time=None, after_increment=None):
     cur = conn.cursor()
     if after_time is not None and after_increment is not None:
@@ -588,7 +730,7 @@ def _build_army_rows(formations):
         )
     return rows
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None):
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -752,6 +894,42 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         )
     if not sys_rows:
         sys_rows = '<tr><td colspan="6" class="empty-note">' + L("no_systems") + '</td></tr>'
+
+    # --- コロニー候補テーブル ---
+    colony_rows = ""
+    if colony_candidates:
+        prev_sys = None
+        for c in colony_candidates:
+            if c["system"] != prev_sys:
+                colspan = 5
+                colony_rows += (
+                    '<tr style="background:#0d1a0d">'
+                    '<td colspan="' + str(colspan) + '" style="color:#00ff9d;font-weight:bold;padding:4px 8px">'
+                    + c["system"] + '</td></tr>'
+                )
+                prev_sys = c["system"]
+            cost_val = f'{c["cost"]:.2f}'
+            cost_tag = L("cost_exact") if c["exact"] else L("cost_est")
+            if c["cost"] <= 2.0:
+                cost_color = "#00ff9d"
+            elif c["cost"] <= 2.5:
+                cost_color = "#f0c040"
+            else:
+                cost_color = "#e07060"
+            temp_str = (str(c["temp_c"]) + "°C") if c["temp_c"] is not None else "—"
+            grav_str = (str(c["grav"]) + "G") if c["grav"] is not None else "—"
+            colony_rows += (
+                '<tr>'
+                '<td style="padding-left:20px">' + (c["body"] or "?") + '</td>'
+                '<td style="text-align:center;color:' + cost_color + ';font-weight:bold">'
+                + cost_val + '</td>'
+                '<td style="text-align:center;font-size:11px;color:#888">(' + cost_tag + ')</td>'
+                '<td style="text-align:center">' + temp_str + '</td>'
+                '<td style="text-align:center">' + grav_str + '</td>'
+                '</tr>'
+            )
+    if not colony_rows:
+        colony_rows = '<tr><td colspan="5" class="empty-note">' + L("no_candidates") + '</td></tr>'
 
     # --- 設計書タブ ---
     WEAPON_CATS = {2, 3, 26, 28, 39, 40}
@@ -980,6 +1158,17 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<table><thead><tr><th>' + L("th_system") + '</th><th>' + L("th_discovered") + '</th><th>' + L("th_grav") + '</th><th>' + L("th_geo") + '</th><th>' + L("th_jp") + '</th><th>' + L("th_minerals") + '</th></tr></thead>',
         '<tbody>' + sys_rows + '</tbody></table>',
         '</div></div>',
+        '<div class="card"><div class="card-title">' + L("colony_candidates") + '</div>',
+        '<div style="overflow-x:auto">',
+        '<table><thead><tr>'
+        '<th>' + L("th_body") + '</th>'
+        '<th style="text-align:center">' + L("th_colony_cost") + '</th>'
+        '<th></th>'
+        '<th style="text-align:center">' + L("th_temp_c") + '</th>'
+        '<th style="text-align:center">' + L("th_grav") + '</th>'
+        '</tr></thead>',
+        '<tbody>' + colony_rows + '</tbody></table>',
+        '</div></div>',
         '</div>',  # /tab-systems
 
         # === ARMY タブ ===
@@ -1086,17 +1275,18 @@ def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     # EN run is HTML-only; state files (log pos, snapshot) are managed by the JA run
     is_primary = (_LANG == "ja")
-    snapshot     = load_mineral_snapshot(base_dir) if is_primary else None
-    systems      = get_systems(conn, game_id, race_id)
-    ship_classes  = get_ship_classes(conn, game_id, race_id)
-    research     = get_research(conn, game_id, race_id)
-    fleets       = get_fleets(conn, game_id, race_id)
-    ships        = get_ships(conn, game_id, race_id)
-    tasks        = get_shipyard_tasks(conn, game_id, race_id)
-    shipyards    = get_shipyards(conn, game_id, race_id)
-    pops         = get_populations(conn, game_id, race_id)
-    unexplored   = get_unexplored_jp(conn, game_id, race_id)
-    ground       = get_ground_formations(conn, game_id, race_id)
+    snapshot          = load_mineral_snapshot(base_dir) if is_primary else None
+    systems           = get_systems(conn, game_id, race_id)
+    ship_classes      = get_ship_classes(conn, game_id, race_id)
+    research          = get_research(conn, game_id, race_id)
+    fleets            = get_fleets(conn, game_id, race_id)
+    ships             = get_ships(conn, game_id, race_id)
+    tasks             = get_shipyard_tasks(conn, game_id, race_id)
+    shipyards         = get_shipyards(conn, game_id, race_id)
+    pops              = get_populations(conn, game_id, race_id)
+    unexplored        = get_unexplored_jp(conn, game_id, race_id)
+    ground            = get_ground_formations(conn, game_id, race_id)
+    colony_candidates = get_colony_candidates(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -1109,7 +1299,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
