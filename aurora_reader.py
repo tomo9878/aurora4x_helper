@@ -146,7 +146,8 @@ def get_ships(conn, game_id, race_id):
     cur.execute("""
         SELECT s.ShipName, s.FleetID, s.Fuel, s.MaintenanceState, sc.ClassName
         FROM FCT_Ship s JOIN FCT_ShipClass sc ON s.ShipClassID = sc.ShipClassID
-        WHERE s.GameID=? AND s.RaceID=? AND s.Destroyed=0 ORDER BY s.ShipName
+        WHERE s.GameID=? AND s.RaceID=? AND s.Destroyed=0 AND s.ShippingLineID=0
+        ORDER BY s.ShipName
     """, (game_id, race_id))
     return [dict(r) for r in cur.fetchall()]
 
