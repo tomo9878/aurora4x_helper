@@ -1292,6 +1292,20 @@ def main():
     if is_primary:
         last_time, last_inc = load_last_log_pos(base_dir, game_id)
         is_first = last_time is None
+
+        # ロールバック検出: 保存済みの位置がDBの最新ログより未来なら位置をリセット
+        if last_time is not None:
+            _cur = conn.cursor()
+            _cur.execute(
+                "SELECT MAX(Time) as mt FROM FCT_GameLog WHERE GameID=? AND RaceID=?",
+                (game_id, race_id)
+            )
+            _row = _cur.fetchone()
+            if _row and _row["mt"] is not None and float(_row["mt"]) < last_time:
+                print("[WARN] セーブのロールバックを検出しました。ログ位置をリセットします。")
+                last_time, last_inc = None, None
+                is_first = True
+
         logs = get_gamelog(conn, game_id, race_id, last_time, last_inc)
     conn.close()
 
