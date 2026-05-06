@@ -84,6 +84,34 @@ _LANG = "ja"
 def L(key):
     return LABELS[_LANG][key]
 
+# ==================== 天体名ユーティリティ ====================
+
+def to_roman(n):
+    vals = [(1000,'M'),(900,'CM'),(500,'D'),(400,'CD'),(100,'C'),(90,'XC'),
+            (50,'L'),(40,'XL'),(10,'X'),(9,'IX'),(5,'V'),(4,'IV'),(1,'I')]
+    r = ''
+    for v, s in vals:
+        while n >= v:
+            r += s; n -= v
+    return r
+
+def make_body_name(row, parent_map):
+    """FCT_SystemBody行から表示名を生成する（aurora_minerals.pyと共通ロジック）"""
+    name = row.get("BodyName") or row.get("Name")
+    if name:
+        return name
+    planet_num = row.get("PlanetNumber") or 0
+    orbit_num  = row.get("OrbitNumber") or 0
+    body_class = row.get("BodyClass") or 0
+    if body_class == 2:  # 衛星
+        parent = parent_map.get(row.get("ParentBodyID"))
+        parent_planet = parent["PlanetNumber"] if parent else planet_num
+        return "Moon " + to_roman(parent_planet) + " " + str(orbit_num)
+    elif body_class == 3:  # 小惑星帯
+        return "Asteroid Belt " + to_roman(planet_num)
+    else:
+        return to_roman(planet_num) if planet_num else "(unnamed)"
+
 # ==================== DB接続 ====================
 
 def get_db_path(db_arg=None):
@@ -426,7 +454,9 @@ def get_colony_candidates(conn, game_id, race_id):
     # 2. Geo-surveyed uninhabited bodies
     ph = ",".join("?" * len(known_sys))
     cur.execute(f"""
-        SELECT sb.SystemBodyID, sb.SystemID, sb.Name,
+        SELECT sb.SystemBodyID, sb.SystemID,
+               NULLIF(sb.Name,'') as BodyName,
+               sb.BodyClass, sb.PlanetNumber, sb.OrbitNumber, sb.ParentBodyID,
                sb.SurfaceTemp, sb.Gravity, sb.AtmosPress
         FROM FCT_SystemBody sb
         JOIN FCT_SystemBodySurveys sbs ON sb.SystemBodyID=sbs.SystemBodyID
@@ -438,6 +468,18 @@ def get_colony_candidates(conn, game_id, race_id):
     uninhabited = [dict(r) for r in cur.fetchall()]
 
     if uninhabited:
+        # 親天体マップ（衛星の名前生成用）
+        parent_ids = {b["ParentBodyID"] for b in uninhabited if b["ParentBodyID"]}
+        parent_map = {}
+        if parent_ids:
+            ph_p = ",".join("?" * len(parent_ids))
+            cur.execute(
+                f"SELECT SystemBodyID, Name, PlanetNumber FROM FCT_SystemBody WHERE SystemBodyID IN ({ph_p})",
+                list(parent_ids)
+            )
+            for p in cur.fetchall():
+                parent_map[p["SystemBodyID"]] = dict(p)
+
         body_ids = [b["SystemBodyID"] for b in uninhabited]
         ph2 = ",".join("?" * len(body_ids))
         cur.execute(f"""
@@ -463,7 +505,7 @@ def get_colony_candidates(conn, game_id, race_id):
                 results.append({
                     "system": sys_name_map.get(body["SystemID"], "?"),
                     "system_id": body["SystemID"],
-                    "body": body["Name"] or ("Body #" + str(body["SystemBodyID"])),
+                    "body": make_body_name(body, parent_map),
                     "cost": cost,
                     "temp_c": round(body["SurfaceTemp"] - 273.15, 1),
                     "grav": round(body["Gravity"], 2),

@@ -8,6 +8,7 @@ import sqlite3
 import datetime
 import sys
 import os
+from aurora_reader import to_roman, make_body_name
 
 MINERAL_NAMES = {
     1: "Duranium", 2: "Neutronium", 3: "Corbomite", 4: "Tritanium",
@@ -96,16 +97,6 @@ def get_mineral_data(conn, game_id, race_id):
     """, (game_id, game_id, race_id, game_id, race_id, game_id))
     rows = cur.fetchall()
 
-    # 惑星番号→ローマ数字変換
-    def to_roman(n):
-        vals = [(1000,'M'),(900,'CM'),(500,'D'),(400,'CD'),(100,'C'),(90,'XC'),
-                (50,'L'),(40,'XL'),(10,'X'),(9,'IX'),(5,'V'),(4,'IV'),(1,'I')]
-        r = ''
-        for v, s in vals:
-            while n >= v:
-                r += s; n -= v
-        return r
-
     # 親天体のPlanetNumberを引くためのマップ
     parent_ids = set(r["ParentBodyID"] for r in rows if r["ParentBodyID"])
     parent_map = {}
@@ -116,27 +107,12 @@ def get_mineral_data(conn, game_id, race_id):
             list(parent_ids)
         )
         for p in cur.fetchall():
-            parent_map[p["SystemBodyID"]] = p
-
-    def make_body_name(r):
-        if r["BodyName"]:
-            return r["BodyName"]
-        planet_num = r["PlanetNumber"] or 0
-        orbit_num = r["OrbitNumber"] or 0
-        body_class = r["BodyClass"]
-        if body_class == 2:  # 衛星
-            parent = parent_map.get(r["ParentBodyID"])
-            parent_planet = parent["PlanetNumber"] if parent else planet_num
-            return "Moon " + to_roman(parent_planet) + " " + str(orbit_num)
-        elif body_class == 3:  # 小惑星
-            return "Asteroid Belt " + to_roman(planet_num)
-        else:
-            return to_roman(planet_num) if planet_num else "(unnamed)"
+            parent_map[p["SystemBodyID"]] = dict(p)
 
     # 天体ごとに集約
     bodies = {}
     for r in rows:
-        body_name = make_body_name(r)
+        body_name = make_body_name(dict(r), parent_map)
         key = (r["SystemName"], body_name, r["SystemBodyID"])
         if key not in bodies:
             bodies[key] = {
