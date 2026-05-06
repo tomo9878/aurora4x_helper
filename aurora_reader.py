@@ -44,6 +44,15 @@ LABELS = {
         "th_body": "天体名", "th_colony_cost": "入植コスト",
         "th_temp_c": "表面温度", "cost_exact": "実測", "cost_est": "概算",
         "no_candidates": "なし",
+        "intel_tab": "INTEL",
+        "intel_card": "既知勢力インテリジェンス",
+        "diplo_pts": "外交pt", "damage_dealt": "与ダメージ",
+        "th_class_name": "艦種クラス", "th_ship_count": "隻数",
+        "th_thermal": "熱源", "th_last_contact": "最終目撃",
+        "th_ship_name": "艦名", "th_last_sys": "最終目撃星系",
+        "currently_visible": "探知中",
+        "no_intel": "既知勢力なし",
+        "contact_status_known": "接触済",
     },
     "en": {
         "capital": "Capital", "needs_maint": "Needs Maint.", "paused": "Paused",
@@ -70,6 +79,15 @@ LABELS = {
         "th_equip": "Equipment & Capabilities", "units_unit": "units", "armour": "Arm", "wpn": "Wpn",
         "no_research": "No research projects", "no_tasks": "No construction tasks",
         "no_ships": "No ships", "no_systems": "No system data",
+        "intel_tab": "INTEL",
+        "intel_card": "Known Race Intelligence",
+        "diplo_pts": "Diplo Pts", "damage_dealt": "Dmg Dealt",
+        "th_class_name": "Class", "th_ship_count": "Ships",
+        "th_thermal": "Thermal", "th_last_contact": "Last Contact",
+        "th_ship_name": "Ship", "th_last_sys": "Last Seen",
+        "currently_visible": "On Sensors",
+        "no_intel": "No known races",
+        "contact_status_known": "Known",
         "no_formations": "No formation data",
         "show_obs": "Show Obsolete Classes", "obs_label": "Obsolete classes", "obs_unit": "",
         "colony_candidates": "Colony Candidates (Cost < 3.0)",
@@ -516,6 +534,80 @@ def get_colony_candidates(conn, game_id, race_id):
     return results
 
 
+def get_alien_intel(conn, game_id, race_id):
+    """
+    プレイヤー視点の既知勢力インテリジェンスを返す。
+    各勢力に: 基本情報 + 既知艦種 + 既知艦船（現在探知中フラグ付き）
+    """
+    cur = conn.cursor()
+
+    # 現在センサー探知中の ShipID セット
+    cur.execute("""
+        SELECT DISTINCT ContactID FROM FCT_Contacts
+        WHERE GameID=? AND DetectRaceID=? AND ContactType=1
+    """, (game_id, race_id))
+    visible_ship_ids = {r["ContactID"] for r in cur.fetchall()}
+
+    # 既知勢力一覧
+    cur.execute("""
+        SELECT ar.AlienRaceID, ar.AlienRaceName, ar.ContactStatus,
+               ar.FirstDetected, ar.DiplomaticPoints, ar.DamageCausedByAlienRace,
+               r.RaceName
+        FROM FCT_AlienRace ar
+        LEFT JOIN FCT_Race r ON r.RaceID=ar.AlienRaceID AND r.GameID=ar.GameID
+        WHERE ar.GameID=? AND ar.ViewRaceID=? AND ar.ContactStatus=1
+        ORDER BY ar.FirstDetected
+    """, (game_id, race_id))
+    races = [dict(r) for r in cur.fetchall()]
+    if not races:
+        return []
+
+    race_ids = [r["AlienRaceID"] for r in races]
+    ph = ",".join("?" * len(race_ids))
+
+    # 既知艦種
+    cur.execute(f"""
+        SELECT ac.AlienRaceID, ac.ClassName, ac.MaxSpeed, ac.ThermalSignature,
+               ac.ShipCount, ac.ArmourStrength, ac.ShieldStrength,
+               ac.FirstDetected
+        FROM FCT_AlienClass ac
+        WHERE ac.GameID=? AND ac.ViewRaceID=? AND ac.AlienRaceID IN ({ph})
+        ORDER BY ac.AlienRaceID, ac.FirstDetected
+    """, [game_id, race_id] + race_ids)
+    classes_by_race = {}
+    for r in cur.fetchall():
+        rid = r["AlienRaceID"]
+        classes_by_race.setdefault(rid, []).append(dict(r))
+
+    # 既知艦船
+    cur.execute(f"""
+        SELECT s.ShipID, s.AlienRaceID, s.Name, s.Speed,
+               s.LastContactTime, s.Destroyed,
+               s.DamageTaken, s.ArmourDamage, s.PenetratingDamage,
+               ac.ClassName,
+               sys.Name as SystemName
+        FROM FCT_AlienShip s
+        JOIN FCT_AlienClass ac ON ac.AlienClassID=s.AlienClassID AND ac.GameID=s.GameID
+        LEFT JOIN FCT_RaceSysSurvey sys ON sys.SystemID=s.LastSysID
+            AND sys.GameID=s.GameID AND sys.RaceID=?
+        WHERE s.GameID=? AND s.ViewRaceID=? AND s.AlienRaceID IN ({ph})
+        ORDER BY s.AlienRaceID, s.LastContactTime DESC
+    """, [race_id, game_id, race_id] + race_ids)
+    ships_by_race = {}
+    for r in cur.fetchall():
+        rid = r["AlienRaceID"]
+        row = dict(r)
+        row["visible"] = r["ShipID"] in visible_ship_ids
+        ships_by_race.setdefault(rid, []).append(row)
+
+    for race in races:
+        rid = race["AlienRaceID"]
+        race["classes"] = classes_by_race.get(rid, [])
+        race["ships"]   = ships_by_race.get(rid, [])
+
+    return races
+
+
 def get_gamelog(conn, game_id, race_id, after_time=None, after_increment=None):
     cur = conn.cursor()
     if after_time is not None and after_increment is not None:
@@ -773,7 +865,7 @@ def _build_army_rows(formations):
         )
     return rows
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None):
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -974,6 +1066,82 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     if not colony_rows:
         colony_rows = '<tr><td colspan="5" class="empty-note">' + L("no_candidates") + '</td></tr>'
 
+    # --- INTELタブ ---
+    intel_html = ""
+    for race_info in (alien_intel or []):
+        rname = race_info["RaceName"] or race_info["AlienRaceName"] or "Unknown"
+        diplo = race_info["DiplomaticPoints"] or 0
+        dmg   = race_info["DamageCausedByAlienRace"] or 0
+        first = aurora_time(race_info["FirstDetected"])
+        diplo_color = "#e07060" if diplo < 0 else "#00ff9d"
+        diplo_str = (("+" if diplo > 0 else "") + str(int(diplo)))
+
+        # 艦種テーブル
+        class_rows = ""
+        for c in race_info["classes"]:
+            class_rows += (
+                '<tr>'
+                '<td>' + (c["ClassName"] or "?") + '</td>'
+                '<td style="text-align:right">' + f'{int(c["MaxSpeed"] or 0):,}' + ' km/s</td>'
+                '<td style="text-align:right">' + str(round(c["ThermalSignature"] or 0, 1)) + '</td>'
+                '<td style="text-align:center">' + str(c["ShipCount"] or 0) + '</td>'
+                '<td style="text-align:center">' + str(int(c["ArmourStrength"] or 0)) + ' / ' + str(int(c["ShieldStrength"] or 0)) + '</td>'
+                '</tr>'
+            )
+        if not class_rows:
+            class_rows = '<tr><td colspan="5" class="empty-note">—</td></tr>'
+
+        # 艦船テーブル
+        ship_rows_i = ""
+        for s in race_info["ships"]:
+            vis_badge = ('<span class="badge-warn" style="background:#003300;border-color:#00ff9d;color:#00ff9d">'
+                         + L("currently_visible") + '</span>') if s["visible"] else ""
+            dmg_str = ""
+            if (s["DamageTaken"] or 0) > 0:
+                dmg_str = f' <span style="color:#e07060;font-size:11px">[Dmg:{int(s["DamageTaken"])}]</span>'
+            ship_rows_i += (
+                '<tr>'
+                '<td>' + (s["Name"] or "?") + vis_badge + dmg_str + '</td>'
+                '<td>' + (s["ClassName"] or "?") + '</td>'
+                '<td>' + (s["SystemName"] or "?") + '</td>'
+                '<td style="text-align:center">' + aurora_time(s["LastContactTime"]) + '</td>'
+                '</tr>'
+            )
+        if not ship_rows_i:
+            ship_rows_i = '<tr><td colspan="4" class="empty-note">—</td></tr>'
+
+        intel_html += (
+            '<div class="card">'
+            '<div class="card-title">' + rname
+            + ' <span class="badge-warn" style="font-size:11px;background:#001a00;border-color:#00aa55;color:#00aa55">'
+            + L("contact_status_known") + '</span>'
+            + ' <span style="font-size:12px;color:#888;font-weight:normal">'
+            + L("th_discovered") + ': ' + first
+            + ' &nbsp;|&nbsp; ' + L("diplo_pts") + ': <span style="color:' + diplo_color + '">' + diplo_str + '</span>'
+            + (' &nbsp;|&nbsp; ' + L("damage_dealt") + ': <span style="color:#e07060">' + str(int(dmg)) + '</span>' if dmg > 0 else '')
+            + '</span></div>'
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+
+            '<div><div style="font-size:11px;color:#888;margin-bottom:4px">' + L("th_class_name") + '</div>'
+            '<div style="overflow-x:auto"><table><thead><tr>'
+            '<th>' + L("th_class_name") + '</th><th style="text-align:right">' + L("speed") + '</th>'
+            '<th style="text-align:right">' + L("th_thermal") + '</th>'
+            '<th style="text-align:center">' + L("th_ship_count") + '</th>'
+            '<th style="text-align:center">Arm/Shld</th>'
+            '</tr></thead><tbody>' + class_rows + '</tbody></table></div></div>'
+
+            '<div><div style="font-size:11px;color:#888;margin-bottom:4px">' + L("th_ship_name") + '</div>'
+            '<div style="overflow-x:auto"><table><thead><tr>'
+            '<th>' + L("th_ship_name") + '</th><th>' + L("th_class_name") + '</th>'
+            '<th>' + L("th_last_sys") + '</th>'
+            '<th style="text-align:center">' + L("th_last_contact") + '</th>'
+            '</tr></thead><tbody>' + ship_rows_i + '</tbody></table></div></div>'
+
+            '</div></div>'
+        )
+    if not intel_html:
+        intel_html = '<div class="card"><p class="empty-note">' + L("no_intel") + '</p></div>'
+
     # --- 設計書タブ ---
     WEAPON_CATS = {2, 3, 26, 28, 39, 40}
     SENSOR_CATS = {13, 14, 34}
@@ -1163,6 +1331,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<button class="tab-btn" onclick="showTab(\'systems\',this)">SYSTEMS</button>',
         '<button class="tab-btn" onclick="showTab(\'army\',this)">ARMY</button>',
         '<button class="tab-btn" onclick="showTab(\'designs\',this)">DESIGNS</button>',
+        '<button class="tab-btn" onclick="showTab(\'intel\',this)">' + L("intel_tab") + '</button>',
         '</div>',
 
         # === EMPIRE タブ ===
@@ -1239,6 +1408,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div id="designs-obs" style="display:none">' + design_cards_obs + '</div>',
         '</div>',
         '</div>',  # /tab-designs
+
+        # === INTEL タブ ===
+        '<div id="tab-intel" class="tab-panel">',
+        intel_html,
+        '</div>',  # /tab-intel
 
         '<script>',
         'function showTab(id,btn){',
@@ -1330,6 +1504,7 @@ def main():
     unexplored        = get_unexplored_jp(conn, game_id, race_id)
     ground            = get_ground_formations(conn, game_id, race_id)
     colony_candidates = get_colony_candidates(conn, game_id, race_id)
+    alien_intel       = get_alien_intel(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -1356,7 +1531,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
