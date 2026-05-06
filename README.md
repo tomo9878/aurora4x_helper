@@ -46,6 +46,7 @@ aurora_reader.bat
 - 重力探査・地理探査の完了状況
 - ジャンプポイント通過状況
 - 調査済み鉱物 Top 3
+- **有望な入植候補 (コスト < 3.0)** — 地理調査済みの未入植天体を種族耐性から概算コスト計算し、入植コスト3未満の天体のみ星系ごとに表示。既存コロニーは DB の実測値を使用。
 
 #### ARMY タブ
 - 配備中の地上部隊一覧
@@ -141,6 +142,7 @@ Opens in a browser with four tabs.
 - Gravitational and geological survey completion status
 - Jump point passage status
 - Top 3 surveyed minerals per system
+- **Colony Candidates (Cost < 3.0)** — Geo-surveyed uninhabited bodies with estimated colony cost below 3.0, grouped by system. Cost is approximated from surface temperature, gravity, and atmosphere against the player species' tolerances. Existing colonies show the exact value from the database.
 
 #### ARMY Tab
 - List of all deployed ground formations
