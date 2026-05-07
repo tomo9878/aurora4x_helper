@@ -82,6 +82,7 @@ def get_mineral_data(conn, game_id, race_id):
             sb.PlanetNumber,
             sb.OrbitNumber,
             sb.ParentBodyID,
+            sb.GroundMineralSurvey,
             ss.Name as SystemName,
             md.MaterialID,
             md.Amount,
@@ -120,6 +121,7 @@ def get_mineral_data(conn, game_id, race_id):
             "body_class": r["BodyClass"],
             "body_type": r["BodyTypeID"],
             "radius": r["Radius"] or 0,
+            "gsp": r["GroundMineralSurvey"] or 0,
         }
         bodies[key]["minerals"][r["MaterialID"]] = {
             "amount": r["Amount"],
@@ -135,6 +137,7 @@ def get_mineral_data(conn, game_id, race_id):
             "body_class": data["body_class"],
             "body_type": data["body_type"],
             "radius": data["radius"],
+            "gsp": data["gsp"],
             "minerals": data["minerals"]
         })
     return result
@@ -161,6 +164,11 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
             if orbital else
             '<td class="orbital-no"></td>'
         )
+        gsp = b["gsp"]
+        if gsp > 0:
+            gsp_cell = '<td class="gsp-cell gsp-remain" title="地質調査サイト残り">' + str(gsp) + '</td>'
+        else:
+            gsp_cell = '<td class="gsp-cell gsp-done" title="地質調査完了">✓</td>'
         cells = ""
         total_weighted = 0
         for mid in range(1, 12):
@@ -190,6 +198,7 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
             '<td class="body-system">' + b["system"] + '</td>'
             '<td class="body-name">' + b["body"] + '</td>'
             + orbital_cell
+            + gsp_cell
             + cells +
             '</tr>'
         )
@@ -243,6 +252,9 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
 
     .orbital-ok { text-align: center; color: #00ff9d; font-size: 14px; }
     .orbital-no { text-align: center; color: var(--text2); }
+    .gsp-cell { text-align: center; font-size: 11px; min-width: 36px; }
+    .gsp-remain { color: #f39c12; font-weight: bold; }
+    .gsp-done { color: #2ecc71; }
     .footer { margin-top: 20px; font-size: 11px; color: var(--text2); text-align: right; }
     """
 
@@ -362,6 +374,7 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '<table>'
         '<thead><tr>'
         '<th>星系</th><th>天体名</th><th title="軌道採掘">⛏</th>'
+        '<th title="Ground Survey Potential">GSP</th>'
         + header_cells +
         '</tr></thead>'
         '<tbody id="tbody">' + rows_html + '</tbody>'
