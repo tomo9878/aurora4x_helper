@@ -5,7 +5,7 @@
 -- ============================================================
 
 DELETE FROM DIM_NamingThemeTypes WHERE ThemeID=44;
-INSERT INTO DIM_NamingThemeTypes (ThemeID, Description, RaceNameEligible) VALUES (44, 'Japanese Merchant Ships (Maru)', 0);
+INSERT INTO DIM_NamingThemeTypes (ThemeID, Description, RaceNameEligible) VALUES (44, '艦名テーマ・日本の商船（丸）', 0);
 
 DELETE FROM DIM_NamingTheme WHERE NameThemeID=44;
 
