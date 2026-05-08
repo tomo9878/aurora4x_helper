@@ -21,7 +21,8 @@ aurora_reader.bat
 生成されるファイル:
 | ファイル | 内容 |
 |---|---|
-| `aurora_dashboard.html` | 帝国ダッシュボード |
+| `aurora_dashboard.html` | 帝国ダッシュボード（日本語） |
+| `aurora_dashboard_en.html` | 帝国ダッシュボード（英語） |
 | `aurora_minerals.html` | 鉱物リソースビューワー |
 | `aurora_gamelog.txt` | 全ゲームログ（累積） |
 | `aurora_gamelog_diff.txt` | 前回実行以降の差分ログ |
@@ -30,7 +31,7 @@ aurora_reader.bat
 
 ### aurora_reader.py — 帝国ダッシュボード
 
-ブラウザで開くと4つのタブで帝国情報を確認できます。
+ブラウザで開くと6つのタブで帝国情報を確認できます。
 
 #### EMPIRE タブ
 - **資産・研究ポイント** — 現在の富・研究キャパシティ
@@ -62,6 +63,17 @@ aurora_reader.bat
 - 設計済み艦船クラスの一覧（廃止クラスは別表示・チェックで切替）
 - サイズ・速度・コスト・乗員・燃料・シールド・就役数
 - エンジン・武装・センサー・特殊装備のタグ表示
+- **速度・必要EP計算** — 艦クラスを選択して目標速度を入力すると必要合計EPを自動計算。研究済みエンジンごとに必要基数・合計EP・余剰EPを一覧表示。エンジン数入力で1基あたり必要EPも算出。
+
+#### INTEL タブ
+- 把握済みのエイリアン勢力・艦船クラス情報
+- 艦船クラスごとの速度・熱シグネチャ・シールド・装甲・艦数
+
+#### TECH タブ
+- 研究済みコンポーネントの俯瞰ビュー
+- 研究分野ごとのカード表示（Power、Sensors、Direct Fire、Missiles 等）
+- 分野内タブで技術種別ごとに最新テクノロジーを色付きでハイライト
+- カスタム設計済みコンポーネントの一覧
 
 ---
 
@@ -77,11 +89,52 @@ aurora_reader.bat
 
 ---
 
+### ship_designer.html — 艦船設計計算表
+
+手動で開くスタンドアロン計算ツールです（スクリプト不要）。
+
+- **艦種タブ** — ビーム戦闘艦・ミサイル戦闘艦・調査船・キャリア・PDエスコートのプリセット割合
+- **総トン数入力** → カテゴリ別トン数・HS をリアルタイム計算
+- **設計テキスト解析** — Aurora の艦船設計テキストを貼り付けると自動解析してカテゴリ別HS を算出
+- **速度・必要EP計算** — トン数・目標速度を入力するだけで必要合計EPを即計算。エンジン数入力で1基あたり必要EPも算出。
+
+---
+
 ### ログ差分機能
 
 `aurora_reader.py` は実行のたびに前回終了時点のログ位置を記録します。  
 次回実行時は**前回以降の新規イベントのみ** `aurora_gamelog_diff.txt` に出力します。  
 AAR（プレイ日記）の下書きや、ChatGPT等への状況報告に便利です。
+
+---
+
+### おまけ（extras/）
+
+Aurora の DB に直接書き込む日本語化・日本風カスタマイズ用 SQL ファイルのセットです。  
+`apply_japanese.bat` をダブルクリックするか `apply_japanese.py` を実行すると、フォルダ内の全 SQL をまとめて適用できます。  
+**Aurora 起動中は実行しないでください。**
+
+| ファイル | 内容 |
+|---|---|
+| `apply_japanese.bat` / `apply_japanese.py` | extras/ 内の全 SQL を一括適用するランチャー |
+| `aurora_kanji_names.sql` | 漢字艦名テーマ6種を追加（ThemeID 700〜705） |
+| `aurora_maru_names.sql` | 民間船向け「丸」命名テーマを追加（ThemeID 44、101件） |
+| `aurora_jp_firstnames.sql` | 日本人指揮官の名（下の名前）を漢字に置換（689件） |
+| `aurora_jp_surnames.sql` | 日本人指揮官の姓（苗字）を漢字に置換（974件） |
+| `aurora_kanji_ranks.sql` | 階級名を日本語に変更（元帥海軍大将〜） |
+| `aurora_theme_names_ja.sql` | 既存の命名テーマ説明文を日本語に更新 |
+
+#### 漢字艦名テーマ詳細
+
+| ThemeID | テーマ名 | 件数 | 内容 |
+|---|---|---|---|
+| 700 | 艦名テーマ・日本艦（漢字） | 240件 | 日本海軍艦艇名の総合プール |
+| 701 | 艦名テーマ・日本戦艦（漢字） | 87件 | 旧律令国68国を含む戦艦名 |
+| 702 | 艦名テーマ・日本巡洋艦（漢字） | 72件 | 巡洋艦名 |
+| 703 | 艦名テーマ・日本空母（漢字） | 30件 | 空母名 |
+| 704 | 艦名テーマ・日本駆逐艦（漢字） | 261件 | 駆逐艦名 |
+| 705 | クラステーマ・日本（漢字） | 36件 | 艦型クラス名用 |
+| 44 | 艦名テーマ・日本の商船（丸） | 101件 | 民間船向け「○○丸」名 |
 
 ---
 
@@ -126,7 +179,7 @@ Generated files:
 
 ### aurora_reader.py — Empire Dashboard
 
-Opens in a browser with four tabs.
+Opens in a browser with six tabs.
 
 #### EMPIRE Tab
 - **Wealth & Research** — Current wealth points and research capacity
@@ -158,6 +211,17 @@ Opens in a browser with four tabs.
 - All ship class designs (obsolete classes toggled separately)
 - Size, speed, cost, crew, fuel, shields, and active hulls
 - Engine, weapon, sensor, and special equipment tags
+- **Required EP Calculator** — Select a ship class and enter a target speed to compute the total EP needed. Shows required engine count, total EP, and surplus for each researched engine. Optional engine count input to calculate required EP per engine.
+
+#### INTEL Tab
+- Known alien races and ship class information
+- Speed, thermal signature, shields, armour, and ship count per class
+
+#### TECH Tab
+- Bird's-eye view of all researched components
+- Cards per research field (Power, Sensors, Direct Fire, Missiles, etc.)
+- Latest technology highlighted in green within each field/type
+- Custom-designed component list
 
 ---
 
@@ -170,6 +234,17 @@ Displays all mineral deposits on surveyed bodies.
 - **Mining calculator** — Enter a mine count to compute annual output in real time
 - **Orbital mining indicator** — ⛏ marks bodies eligible for orbital mining
 - System filter and sortable columns
+
+---
+
+### ship_designer.html — Ship Design Calculator
+
+A standalone tool — open directly in a browser, no Python required.
+
+- **Ship type tabs** — Preset allocation percentages for beam, missile, survey, carrier, and PD escort designs
+- **Total tonnage input** → real-time per-category tonnage and HS calculation
+- **Design text parser** — Paste Aurora ship design text for automatic category breakdown
+- **Required EP Calculator** — Enter tonnage and target speed to instantly compute required total EP. Optional engine count input for per-engine EP target.
 
 ---
 
@@ -189,10 +264,20 @@ Aurora1130Full/
 ├── aurora_reader_en.bat        # English players: dashboard + mineral viewer
 ├── aurora_reader.py            # Empire dashboard generator
 ├── aurora_minerals.py          # Mineral resource viewer
+├── ship_designer.html          # Standalone ship design calculator
 ├── AuroraDB.db                 # Aurora 4x save data (not committed)
 ├── aurora_dashboard.html       # Generated dashboard — Japanese (not committed)
 ├── aurora_dashboard_en.html    # Generated dashboard — English (not committed)
 ├── aurora_minerals.html        # Generated mineral viewer (not committed)
 ├── aurora_gamelog.txt          # Cumulative game log (not committed)
-└── aurora_gamelog_diff.txt     # Diff log since last run (not committed)
+├── aurora_gamelog_diff.txt     # Diff log since last run (not committed)
+└── extras/
+    ├── apply_japanese.bat      # Run all SQL files (double-click)
+    ├── apply_japanese.py       # Run all SQL files (Python)
+    ├── aurora_kanji_names.sql  # Kanji ship name themes (ThemeID 700-705)
+    ├── aurora_maru_names.sql   # Maru civilian ship theme (ThemeID 44)
+    ├── aurora_jp_firstnames.sql# Japanese commander first names (kanji)
+    ├── aurora_jp_surnames.sql  # Japanese commander surnames (kanji)
+    ├── aurora_kanji_ranks.sql  # Japanese rank names
+    └── aurora_theme_names_ja.sql # Japanese descriptions for existing themes
 ```
