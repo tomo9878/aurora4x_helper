@@ -224,6 +224,104 @@ def get_populations(conn, game_id, race_id):
     return [dict(r) for r in cur.fetchall()]
 
 
+def get_mining_data(conn, game_id, race_id):
+    """MININGタブ用: コロニーごとの採掘生産量と在庫を計算する"""
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT ts.AdditionalInfo
+        FROM FCT_RaceTech rt
+        JOIN FCT_TechSystem ts ON rt.TechID = ts.TechSystemID
+        WHERE rt.GameID=? AND rt.RaceID=?
+        AND ts.Name LIKE 'Mining Production%'
+        ORDER BY ts.AdditionalInfo DESC
+        LIMIT 1
+    """, (game_id, race_id))
+    row = cur.fetchone()
+    mining_rate = int(row["AdditionalInfo"]) if row else 5
+
+    # 実効採掘台数 = Σ(Amount × MiningProductionValue) for each colony
+    # MiningProductionValue: Automated Mine=1.0, Civilian Mining Complex=10.0 など
+    cur.execute("""
+        SELECT pi.PopID, SUM(pi.Amount * dim.MiningProductionValue) as EffMines
+        FROM FCT_PopulationInstallations pi
+        JOIN DIM_PlanetaryInstallation dim ON pi.PlanetaryInstallationID = dim.PlanetaryInstallationID
+        WHERE pi.GameID=? AND dim.MiningProductionValue > 0
+        GROUP BY pi.PopID
+    """, (game_id,))
+    mine_counts = {r["PopID"]: round(r["EffMines"]) for r in cur.fetchall()}
+
+    # OMM（軌道採掘モジュール）搭載艦が停泊中の天体ごとの合計OMM数
+    # ComponentID=25720: Orbital Mining Module (自動鉱山と同等の生産レート)
+    cur.execute("""
+        SELECT f.OrbitBodyID, SUM(cc.NumComponent) as TotalOMMs
+        FROM FCT_Ship s
+        JOIN FCT_Fleet f ON s.FleetID=f.FleetID AND s.GameID=f.GameID
+        JOIN FCT_ClassComponent cc ON cc.ClassID=s.ShipClassID AND cc.GameID=s.GameID
+                                   AND cc.ComponentID=25720
+        WHERE s.GameID=? AND s.RaceID=?
+        AND s.Destroyed=0 AND s.ShippingLineID=0
+        AND f.OrbitBodyID IS NOT NULL AND f.OrbitBodyID > 0
+        GROUP BY f.OrbitBodyID
+    """, (game_id, race_id))
+    omm_by_body = {r["OrbitBodyID"]: round(r["TotalOMMs"]) for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT p.PopulationID, p.PopName, p.SystemBodyID, p.SystemID,
+               p.Duranium, p.Neutronium, p.Corbomite, p.Tritanium, p.Boronide,
+               p.Mercassium, p.Vendarite, p.Sorium, p.Uridium, p.Corundium, p.Gallicite,
+               ss.Name as SystemName
+        FROM FCT_Population p
+        JOIN FCT_RaceSysSurvey ss ON p.SystemID=ss.SystemID AND ss.GameID=? AND ss.RaceID=?
+        WHERE p.GameID=? AND p.RaceID=?
+        ORDER BY ss.Name, p.PopName
+    """, (game_id, race_id, game_id, race_id))
+    pop_rows = [dict(r) for r in cur.fetchall()]
+
+    body_ids = [p["SystemBodyID"] for p in pop_rows if p["SystemBodyID"]]
+    mineral_access = {}
+    if body_ids:
+        ph = ",".join("?" * len(body_ids))
+        cur.execute(
+            "SELECT md.SystemBodyID, md.MaterialID, md.Accessibility"
+            " FROM FCT_MineralDeposit md"
+            " JOIN FCT_SystemBodySurveys sbs ON md.SystemBodyID=sbs.SystemBodyID"
+            "   AND sbs.GameID=? AND sbs.RaceID=?"
+            " WHERE md.GameID=? AND md.SystemBodyID IN (" + ph + ") AND md.Amount > 0",
+            [game_id, race_id, game_id] + body_ids
+        )
+        for r in cur.fetchall():
+            bid = r["SystemBodyID"]
+            if bid not in mineral_access:
+                mineral_access[bid] = {}
+            mineral_access[bid][r["MaterialID"]] = r["Accessibility"]
+
+    _MNAMES = ["Duranium","Neutronium","Corbomite","Tritanium","Boronide",
+               "Mercassium","Vendarite","Sorium","Uridium","Corundium","Gallicite"]
+    colonies = []
+    for p in pop_rows:
+        bid = p["SystemBodyID"]
+        static_mines = mine_counts.get(p["PopulationID"], 0) or 0
+        omm_count    = omm_by_body.get(bid, 0)
+        mc = static_mines + omm_count
+        acc_map = mineral_access.get(bid, {})
+        production = {}
+        for mid in range(1, 12):
+            acc = acc_map.get(mid, 0)
+            production[mid] = round(mc * mining_rate * acc) if (acc > 0 and mc > 0) else 0
+        stockpile = {(i + 1): round(p[n] or 0) for i, n in enumerate(_MNAMES)}
+        colonies.append({
+            "pop_id":      p["PopulationID"],
+            "name":        p["PopName"],
+            "system":      p["SystemName"],
+            "mine_count":  static_mines,
+            "omm_count":   omm_count,
+            "production":  production,
+            "stockpile":   stockpile,
+        })
+    return {"mining_rate": mining_rate, "colonies": colonies}
+
+
 def load_mineral_snapshot(base_dir):
     import json
     path = os.path.join(base_dir, "aurora_mineral_snapshot.json")
@@ -1148,7 +1246,111 @@ def _build_army_rows(formations):
         )
     return rows
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None):
+def _build_mining_html(mining_data, snapshot=None):
+    if not mining_data or not mining_data.get("colonies"):
+        return '<div class="card"><p class="empty-note">採掘データなし</p></div>'
+
+    colonies = mining_data["colonies"]
+    mining_rate = mining_data["mining_rate"]
+    snap_pops = (snapshot or {}).get("pops", {})
+
+    _MNAMES = ["Duranium","Neutronium","Corbomite","Tritanium","Boronide",
+               "Mercassium","Vendarite","Sorium","Uridium","Corundium","Gallicite"]
+    _MABBR  = ["Dur","Neu","Cor","Tri","Bor","Mer","Ven","Sor","Uri","Cru","Gal"]
+
+    header = (
+        '<tr class="m-hdr">'
+        '<th class="m-th-label">Colony / System</th>'
+        '<th class="m-th-mines">Mines</th>'
+    )
+    for abbr in _MABBR:
+        header += '<th class="m-th-min">' + abbr + '</th>'
+    header += '</tr>'
+
+    def mcell(prod, stock, neg=False):
+        p_html = ('<span class="m-z">—</span>' if prod == 0
+                  else '<span class="m-p">' + f'{prod:,}' + '</span>')
+        s_html = ''
+        if stock > 0:
+            s_cls = ' m-sneg' if neg else ''
+            s_html = '<span class="m-s' + s_cls + '">' + f'{stock:,}' + '</span>'
+        return '<td class="m-mc">' + p_html + s_html + '</td>'
+
+    emp_prod  = {mid: sum(c["production"].get(mid, 0) for c in colonies) for mid in range(1, 12)}
+    emp_stock = {mid: sum(c["stockpile"].get(mid, 0)  for c in colonies) for mid in range(1, 12)}
+    emp_cells = ''.join(mcell(emp_prod[mid], emp_stock[mid]) for mid in range(1, 12))
+    total_mines = sum(c["mine_count"] for c in colonies)
+    total_omms  = sum(c["omm_count"]  for c in colonies)
+
+    def mines_label(static, omm):
+        s = str(static + omm)
+        if omm > 0:
+            s += ' <span class="m-omm-badge" title="うちOMM ' + str(omm) + '基">OMM:' + str(omm) + '</span>'
+        return s
+
+    emp_mines_label = mines_label(total_mines, total_omms)
+    body_html = (
+        '<tr class="mrow-emp" data-open="1" onclick="mToggleEmp(this)">'
+        '<td class="m-td-label m-lv0"><span class="m-arr">▼</span> EMPIRE TOTAL</td>'
+        '<td class="m-td-mines">' + emp_mines_label + '</td>'
+        + emp_cells + '</tr>'
+    )
+
+    systems_seen = []
+    sys_map = {}
+    for c in colonies:
+        s = c["system"]
+        if s not in sys_map:
+            sys_map[s] = []
+            systems_seen.append(s)
+        sys_map[s].append(c)
+
+    for s_idx, sys_name in enumerate(systems_seen):
+        sys_cols = sys_map[sys_name]
+        sk = 's' + str(s_idx)
+        s_prod   = {mid: sum(c["production"].get(mid, 0) for c in sys_cols) for mid in range(1, 12)}
+        s_stock  = {mid: sum(c["stockpile"].get(mid, 0)  for c in sys_cols) for mid in range(1, 12)}
+        s_mines  = sum(c["mine_count"] for c in sys_cols)
+        s_omms   = sum(c["omm_count"]  for c in sys_cols)
+        s_cells  = ''.join(mcell(s_prod[mid], s_stock[mid]) for mid in range(1, 12))
+
+        body_html += (
+            '<tr class="mrow-sys" data-sys="' + sk + '" data-open="0"'
+            ' onclick="mToggleSys(this,\'' + sk + '\')">'
+            '<td class="m-td-label m-lv1"><span class="m-arr">▶</span> ' + sys_name + '</td>'
+            '<td class="m-td-mines">' + mines_label(s_mines, s_omms) + '</td>'
+            + s_cells + '</tr>'
+        )
+
+        for c in sys_cols:
+            snap = snap_pops.get(c["name"], {})
+            b_cells = ''
+            for mid in range(1, 12):
+                prod  = c["production"].get(mid, 0)
+                stock = c["stockpile"].get(mid, 0)
+                prev  = snap.get(_MNAMES[mid - 1], 0) if snap else 0
+                neg   = (prev > 0 and stock < prev)
+                b_cells += mcell(prod, stock, neg)
+            body_html += (
+                '<tr class="mrow-body" data-sys="' + sk + '" style="display:none">'
+                '<td class="m-td-label m-lv2">' + c["name"] + '</td>'
+                '<td class="m-td-mines">' + mines_label(c["mine_count"], c["omm_count"]) + '</td>'
+                + b_cells + '</tr>'
+            )
+
+    return (
+        '<div class="card">'
+        '<div class="card-title">MINING PRODUCTION'
+        ' <span style="font-size:11px;color:var(--text2);font-weight:normal">'
+        '採掘レート: ' + str(mining_rate) + ' t/mine/yr</span></div>'
+        '<div style="overflow-x:auto">'
+        '<table class="m-tbl"><thead>' + header + '</thead>'
+        '<tbody>' + body_html + '</tbody></table>'
+        '</div></div>'
+    )
+
+
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None, mining_data=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -1618,6 +1820,29 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     .tsum-type { color: var(--text2); font-size: 12px; width: 40%; }
     .tsum-count { text-align: center; font-family: 'Share Tech Mono', monospace; color: var(--text2); font-size: 12px; }
     .tsum-latest { color: var(--accent2); font-size: 12px; font-weight: 500; }
+    .m-tbl { border-collapse: collapse; }
+    .m-hdr th { background: var(--bg3); }
+    .m-th-label { text-align: left; min-width: 200px; padding: 5px 8px; border: 1px solid var(--border); }
+    .m-th-mines { text-align: center; min-width: 52px; padding: 5px 6px; border: 1px solid var(--border); }
+    .m-th-min { text-align: center; min-width: 72px; padding: 5px 4px; border: 1px solid var(--border); font-size: 10px; }
+    .mrow-emp { cursor: pointer; }
+    .mrow-emp:hover td { background: #1a2a3a !important; }
+    .mrow-sys { cursor: pointer; }
+    .mrow-sys:hover td { background: #141e2e !important; }
+    .mrow-body:hover td { background: var(--bg2) !important; }
+    .m-td-label { padding: 5px 8px; border: 1px solid var(--border); white-space: nowrap; }
+    .m-td-mines { text-align: center; padding: 4px 6px; border: 1px solid var(--border); font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--text2); }
+    .m-lv0 { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); background: var(--bg2); }
+    .m-lv1 { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text2); background: var(--bg3); padding-left: 22px !important; }
+    .m-lv2 { font-size: 12px; color: var(--text); background: var(--bg); padding-left: 40px !important; }
+    .m-arr { display: inline-block; width: 14px; font-size: 11px; }
+    .m-mc { text-align: right; padding: 4px 6px; border: 1px solid var(--border); min-width: 72px; vertical-align: top; }
+    .m-p { display: block; font-size: 11px; font-family: 'Share Tech Mono', monospace; }
+    .m-s { display: block; font-size: 10px; color: var(--text2); }
+    .m-sneg { color: #e74c3c !important; }
+    .m-z { color: var(--text2); font-size: 11px; }
+    .m-mine-badge { font-size: 10px; color: var(--text2); margin-left: 6px; background: var(--bg3); border: 1px solid var(--border); padding: 0 4px; border-radius: 2px; }
+    .m-omm-badge { font-size: 10px; color: #00ff9d; background: #001a0d; border: 1px solid #00aa55; padding: 0 4px; border-radius: 2px; margin-left: 4px; cursor: help; }
     """
 
     warn_class = " warn" if unexplored_jp > 5 else ""
@@ -1642,6 +1867,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div class="tab-bar">',
         '<button class="tab-btn active" onclick="showTab(\'main\',this)">EMPIRE</button>',
         '<button class="tab-btn" onclick="showTab(\'systems\',this)">SYSTEMS</button>',
+        '<button class="tab-btn" onclick="showTab(\'mining\',this)">MINING</button>',
         '<button class="tab-btn" onclick="showTab(\'army\',this)">ARMY</button>',
         '<button class="tab-btn" onclick="showTab(\'designs\',this)">DESIGNS</button>',
         '<button class="tab-btn" onclick="showTab(\'intel\',this)">' + L("intel_tab") + '</button>',
@@ -1696,6 +1922,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<tbody>' + colony_rows + '</tbody></table>',
         '</div></div>',
         '</div>',  # /tab-systems
+
+        # === MINING タブ ===
+        '<div id="tab-mining" class="tab-panel">',
+        _build_mining_html(mining_data, snapshot),
+        '</div>',  # /tab-mining
 
         # === ARMY タブ ===
         '<div id="tab-army" class="tab-panel">',
@@ -1754,6 +1985,27 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         'document.querySelectorAll(".inner-tab-btn").forEach(function(b){b.classList.remove("active");});',
         'document.getElementById(id).classList.add("active");',
         'btn.classList.add("active");',
+        '}',
+        'function mToggleEmp(row){',
+        'var open=row.getAttribute("data-open")!=="1";',
+        'row.setAttribute("data-open",open?"1":"0");',
+        'row.querySelector(".m-arr").textContent=open?"▼":"▶";',
+        'document.querySelectorAll(".mrow-sys").forEach(function(r){r.style.display=open?"":"none";});',
+        'if(!open){',
+        'document.querySelectorAll(".mrow-body").forEach(function(r){r.style.display="none";});',
+        'document.querySelectorAll(".mrow-sys").forEach(function(r){r.setAttribute("data-open","0");var a=r.querySelector(".m-arr");if(a)a.textContent="▶";});',
+        '}else{',
+        'document.querySelectorAll(".mrow-sys").forEach(function(r){',
+        'if(r.getAttribute("data-open")==="1"){var sk=r.getAttribute("data-sys");',
+        'document.querySelectorAll(".mrow-body[data-sys=\'"+sk+"\']").forEach(function(b){b.style.display="";});}',
+        '});',
+        '}',
+        '}',
+        'function mToggleSys(row,sk){',
+        'var open=row.getAttribute("data-open")!=="1";',
+        'row.setAttribute("data-open",open?"1":"0");',
+        'row.querySelector(".m-arr").textContent=open?"▼":"▶";',
+        'document.querySelectorAll(".mrow-body[data-sys=\'"+sk+"\']").forEach(function(r){r.style.display=open?"":"none";});',
         '}',
         'function toggleObs(){',
         'var show=document.getElementById("show-obs").checked;',
@@ -1833,6 +2085,7 @@ def main():
     alien_intel       = get_alien_intel(conn, game_id, race_id)
     components        = get_components(conn, game_id, race_id)
     engine_techs      = get_engine_techs(conn, game_id, race_id)
+    mining_data       = get_mining_data(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -1859,7 +2112,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs, mining_data)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
