@@ -128,3 +128,13 @@ INSERT INTO DIM_NamingTheme (NameThemeID, Name) VALUES (44, '蒼洋丸');
 INSERT INTO DIM_NamingTheme (NameThemeID, Name) VALUES (44, '碧海丸');
 INSERT INTO DIM_NamingTheme (NameThemeID, Name) VALUES (44, '金剛丸');
 INSERT INTO DIM_NamingTheme (NameThemeID, Name) VALUES (44, '玉響丸');
+
+-- ============================================================
+-- プレイヤー民間船クラスに丸テーマを適用
+-- Commercial=1 かつ プレイヤー帝国（NPR=0）の船クラスが対象
+-- RandomShipNameFromTheme=1 でテーマからランダム命名を有効化
+-- ============================================================
+UPDATE FCT_ShipClass
+SET NameThemeID = 44, RandomShipNameFromTheme = 1
+WHERE Commercial = 1
+  AND RaceID IN (SELECT RaceID FROM FCT_Race WHERE NPR = 0);
