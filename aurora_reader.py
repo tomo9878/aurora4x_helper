@@ -9,6 +9,7 @@ import datetime
 import sys
 import os
 import argparse
+import re
 
 # ==================== 多言語ラベル ====================
 
@@ -760,6 +761,25 @@ def get_components(conn, game_id, race_id):
     custom = [{"name": r["Name"], "category": CAT_NAMES.get(r["CategoryID"], str(r["CategoryID"]))} for r in cur.fetchall()]
     return {"fields": sorted(fields.values(), key=lambda x: x["field_id"]), "custom": custom}
 
+def get_engine_techs(conn, game_id, race_id):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ts.Name
+        FROM FCT_RaceTech rt
+        JOIN FCT_TechSystem ts ON rt.TechID = ts.TechSystemID
+        WHERE rt.GameID=? AND rt.RaceID=? AND rt.Obsolete=0
+        AND ts.CategoryID=7
+        ORDER BY ts.Name
+    """, (game_id, race_id))
+    engines = []
+    for r in cur.fetchall():
+        name = r["Name"]
+        m = re.search(r'EP([\d.]+)', name)
+        if m:
+            ep = float(m.group(1))
+            engines.append({"name": name, "ep": ep})
+    return engines
+
 def load_last_log_pos(base_dir, game_id):
     """前回の最終ログ位置を読み込む (Time, IncrementID)。ゲームIDが変わったらリセット"""
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
@@ -816,6 +836,80 @@ _COMP_FIELD_SHORT = {
     4: "ミサイル", 5: "建設・生産", 6: "兵站",
     7: "防御", 8: "バイオ", 9: "地上部隊", 10: "部品設計",
 }
+
+def _build_speed_calc_html(ship_classes, engine_techs):
+    import json
+    # ship_classes: Size in HS, tons = Size * 50
+    class_data = [
+        {"name": c["ClassName"], "tons": round(c["Size"] * 50), "hs": round(c["Size"])}
+        for c in ship_classes if not c.get("Obsolete")
+    ]
+    engine_data = engine_techs  # list of {name, ep}
+
+    class_json = json.dumps(class_data, ensure_ascii=False)
+    engine_json = json.dumps(engine_data, ensure_ascii=False)
+
+    if not class_data:
+        return ''
+
+    options = ""
+    for i, c in enumerate(class_data):
+        options += f'<option value="{i}">{c["name"]} ({c["tons"]:,}t / {c["hs"]}HS)</option>'
+
+    return (
+        '<div class="card speed-calc-card">'
+        '<div class="card-title">速度・必要EP 計算</div>'
+        '<div class="speed-calc-row">'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">艦クラス（総トン）</label>'
+            '<select id="sc-class" onchange="scCalc()">' + options + '</select>'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">目標速度 (km/s)</label>'
+            '<input type="number" id="sc-speed" value="1000" min="1" step="100" oninput="scCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">使用エンジン数（任意）</label>'
+            '<input type="number" id="sc-engines" value="" min="1" step="1" placeholder="空欄=全候補表示" oninput="scCalc()">'
+          '</div>'
+        '</div>'
+        '<div id="sc-result" class="sc-result"></div>'
+        '</div>'
+        '<script>'
+        'var SC_CLASSES=' + class_json + ';'
+        'var SC_ENGINES=' + engine_json + ';'
+        'function scCalc(){'
+          'var idx=parseInt(document.getElementById("sc-class").value)||0;'
+          'var cls=SC_CLASSES[idx];'
+          'var speed=parseFloat(document.getElementById("sc-speed").value)||0;'
+          'var nEngInput=document.getElementById("sc-engines").value.trim();'
+          'if(!cls||speed<=0){document.getElementById("sc-result").innerHTML="";return;}'
+          'var reqEP=speed*cls.tons/50000;'
+          'var html="<div class=\'sc-req-ep\'>必要合計EP: <span class=\'sc-ep-val\'>" + reqEP.toFixed(2) + "</span>  <span class=\'sc-sub\'>("+speed.toLocaleString()+" km/s × "+cls.tons.toLocaleString()+"t ÷ 50,000)</span></div>";'
+          'if(nEngInput!==""){'
+            'var n=parseInt(nEngInput);'
+            'if(n>=1){'
+              'var epNeeded=reqEP/n;'
+              'html+="<div class=\'sc-per-eng\'>→ エンジン"+n+"基使用なら 1基あたり EP <b>"+epNeeded.toFixed(2)+"</b> 以上が必要</div>";'
+            '}'
+          '}'
+          'if(SC_ENGINES.length>0){'
+            'html+="<table class=\'sc-table\'><thead><tr><th>研究済みエンジン</th><th style=\'text-align:right\'>EP/基</th><th style=\'text-align:right\'>必要基数</th><th style=\'text-align:right\'>合計EP</th><th style=\'text-align:right\'>余剰EP</th></tr></thead><tbody>";'
+            'SC_ENGINES.forEach(function(e){'
+              'var n=Math.ceil(reqEP/e.ep);'
+              'var totalEP=n*e.ep;'
+              'var surplus=totalEP-reqEP;'
+              'html+="<tr><td>"+e.name+"</td><td style=\'text-align:right;font-family:monospace\'>"+e.ep.toFixed(1)+"</td><td style=\'text-align:right;font-family:monospace;color:var(--accent)\'>"+n+"</td><td style=\'text-align:right;font-family:monospace\'>"+totalEP.toFixed(1)+"</td><td style=\'text-align:right;font-family:monospace;color:var(--text2)\'>+"+surplus.toFixed(1)+"</td></tr>";'
+            '});'
+            'html+="</tbody></table>";'
+          '}else{'
+            'html+="<div class=\'sc-no-eng\'>研究済みエンジンなし — エンジン設計後に再実行してください</div>";'
+          '}'
+          'document.getElementById("sc-result").innerHTML=html;'
+        '}'
+        'document.addEventListener("DOMContentLoaded",function(){scCalc();});'
+        '</script>'
+    )
 
 def _build_components_html(components):
     fields = components["fields"]
@@ -1009,7 +1103,7 @@ def _build_army_rows(formations):
         )
     return rows
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None):
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -1448,6 +1542,20 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     .equip-tag.engine { border-color: #27ae60; color: #58d68d; background: #051a0a; }
     .designs-controls { margin-bottom: 14px; display: flex; gap: 10px; align-items: center; }
     .designs-controls label { font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    .speed-calc-card { margin-bottom: 16px; }
+    .speed-calc-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+    .speed-calc-field { display: flex; flex-direction: column; gap: 4px; }
+    .sc-label { font-size: 11px; color: var(--text2); letter-spacing: 1px; text-transform: uppercase; }
+    .speed-calc-field select, .speed-calc-field input { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 6px 10px; font-size: 13px; font-family: inherit; min-width: 180px; }
+    .speed-calc-field input[type=number] { min-width: 140px; }
+    .sc-result { margin-top: 4px; }
+    .sc-req-ep { font-size: 14px; margin-bottom: 8px; }
+    .sc-ep-val { font-family: 'Share Tech Mono', monospace; font-size: 20px; color: var(--accent2); }
+    .sc-sub { font-size: 11px; color: var(--text2); }
+    .sc-per-eng { font-size: 13px; color: var(--warn); margin-bottom: 8px; }
+    .sc-table { margin-top: 8px; }
+    .sc-table th { font-size: 11px; }
+    .sc-no-eng { font-size: 12px; color: var(--text2); margin-top: 8px; }
     .sys-minerals { font-size: 11px; color: var(--text2); }
     .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text2); text-align: right; }
     .army-name { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); }
@@ -1559,6 +1667,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 
         # === DESIGNS タブ ===
         '<div id="tab-designs" class="tab-panel">',
+        _build_speed_calc_html(ship_classes, engine_techs or []),
         '<div class="card">',
         '<div class="card-title">Ship Designs</div>',
         '<div class="designs-controls">',
@@ -1678,6 +1787,7 @@ def main():
     colony_candidates = get_colony_candidates(conn, game_id, race_id)
     alien_intel       = get_alien_intel(conn, game_id, race_id)
     components        = get_components(conn, game_id, race_id)
+    engine_techs      = get_engine_techs(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -1704,7 +1814,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
