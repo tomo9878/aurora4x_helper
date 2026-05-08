@@ -714,6 +714,52 @@ def get_ground_formations(conn, game_id, race_id):
         f["fortification"] = fortif if fortif is not None else "—"
     return formations
 
+def get_components(conn, game_id, race_id):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            rf.ResearchFieldID as field_id,
+            rf.FieldName as field_name,
+            dt.Description as tech_type,
+            ts.Name,
+            COALESCE(ts.AdditionalInfo, 0) as info
+        FROM FCT_RaceTech rt
+        JOIN FCT_TechSystem ts ON rt.TechID = ts.TechSystemID
+        JOIN DIM_TechType dt ON ts.TechTypeID = dt.TechTypeID
+        JOIN DIM_ResearchField rf ON dt.FieldID = rf.ResearchFieldID
+        WHERE rt.GameID=? AND rt.RaceID=? AND rt.Obsolete=0
+        ORDER BY rf.ResearchFieldID, dt.Description, COALESCE(ts.AdditionalInfo, 0) ASC
+    """, (game_id, race_id))
+    rows = cur.fetchall()
+    fields = {}
+    for r in rows:
+        fid = r["field_id"]
+        if fid not in fields:
+            fields[fid] = {"field_id": fid, "field_name": r["field_name"], "by_type": {}, "total": 0}
+        by_type = fields[fid]["by_type"]
+        tt = r["tech_type"]
+        if tt not in by_type:
+            by_type[tt] = {"names": [], "latest": None}
+        by_type[tt]["names"].append(r["Name"])
+        by_type[tt]["latest"] = r["Name"]  # last in ASC order = highest value
+        fields[fid]["total"] += 1
+
+    SHIP_COMP_CATS = [2, 3, 5, 7, 12, 13, 14, 22, 23, 24, 28, 34, 43, 51]
+    CAT_NAMES = {
+        2: "Laser", 3: "Missile Launcher", 5: "Reactor", 7: "Engine",
+        12: "Shields", 13: "Active Sensor", 14: "Thermal Sensor",
+        22: "Jump Drive", 23: "Direct Fire Control", 24: "Missile Fire Control",
+        28: "Railgun", 34: "EM Sensor", 43: "CIWS", 51: "Decoy Launcher",
+    }
+    cur.execute(
+        "SELECT Name, CategoryID FROM FCT_TechSystem"
+        " WHERE GameID=? AND RaceID=? AND CategoryID IN (" + ",".join("?" * len(SHIP_COMP_CATS)) + ")"
+        " ORDER BY CategoryID, Name",
+        [game_id, race_id] + SHIP_COMP_CATS,
+    )
+    custom = [{"name": r["Name"], "category": CAT_NAMES.get(r["CategoryID"], str(r["CategoryID"]))} for r in cur.fetchall()]
+    return {"fields": sorted(fields.values(), key=lambda x: x["field_id"]), "custom": custom}
+
 def load_last_log_pos(base_dir, game_id):
     """前回の最終ログ位置を読み込む (Time, IncrementID)。ゲームIDが変わったらリセット"""
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
@@ -764,6 +810,104 @@ def build_log_text(logs, race_name, game_name):
     return "\n".join(lines)
 
 # ==================== HTML生成 ====================
+
+_COMP_FIELD_SHORT = {
+    1: "推進・動力", 2: "センサー・制御", 3: "直接射撃",
+    4: "ミサイル", 5: "建設・生産", 6: "兵站",
+    7: "防御", 8: "バイオ", 9: "地上部隊", 10: "部品設計",
+}
+
+def _build_components_html(components):
+    fields = components["fields"]
+    custom = components["custom"]
+
+    # --- 俯瞰サマリーグリッド ---
+    overview = '<div class="tech-overview-grid">'
+    for f in fields:
+        fid = f["field_id"]
+        fname = _COMP_FIELD_SHORT.get(fid, f["field_name"])
+        total = f.get("total", 0)
+        panel_id = "comp-f" + str(fid)
+        overview += (
+            '<div class="tech-overview-card" onclick="showCompTab(\'' + panel_id + '\','
+            'document.querySelector(\'.inner-tab-btn[data-panel=\\"' + panel_id + '\\"]\'))">'
+            '<div class="tov-name">' + fname + '</div>'
+            '<div class="tov-count">' + str(total) + '</div>'
+            '</div>'
+        )
+    if custom:
+        overview += (
+            '<div class="tech-overview-card" onclick="showCompTab(\'comp-custom\','
+            'document.querySelector(\'.inner-tab-btn[data-panel=\\"comp-custom\\"]\'))">'
+            '<div class="tov-name">カスタム設計</div>'
+            '<div class="tov-count">' + str(len(custom)) + '</div>'
+            '</div>'
+        )
+    overview += '</div>'
+
+    # --- 内部タブバー ---
+    btn_parts = []
+    panel_parts = []
+    first = True
+    for f in fields:
+        fid = f["field_id"]
+        fname = _COMP_FIELD_SHORT.get(fid, f["field_name"])
+        panel_id = "comp-f" + str(fid)
+        active = " active" if first else ""
+        btn_parts.append(
+            '<button class="inner-tab-btn' + active + '" data-panel="' + panel_id + '"'
+            ' onclick="showCompTab(\'' + panel_id + '\',this)">' + fname + '</button>'
+        )
+        # サマリーテーブル: TechType | 研究数 | 最新技術
+        rows_html = ""
+        for tt, entry in sorted(f["by_type"].items()):
+            count = len(entry["names"])
+            latest = entry["latest"] or ""
+            rows_html += (
+                '<tr>'
+                '<td class="tsum-type">' + tt + '</td>'
+                '<td class="tsum-count">' + str(count) + '</td>'
+                '<td class="tsum-latest">' + latest + '</td>'
+                '</tr>'
+            )
+        table_html = (
+            '<table><thead><tr>'
+            '<th>技術種別</th><th style="width:50px;text-align:center">研究数</th><th>最新到達技術</th>'
+            '</tr></thead><tbody>' + rows_html + '</tbody></table>'
+        )
+        panel_parts.append(
+            '<div id="' + panel_id + '" class="comp-panel' + active + '"><div class="card">' + table_html + '</div></div>'
+        )
+        first = False
+
+    # カスタム設計タブ
+    if custom:
+        btn_parts.append(
+            '<button class="inner-tab-btn" data-panel="comp-custom"'
+            ' onclick="showCompTab(\'comp-custom\',this)">カスタム設計</button>'
+        )
+        by_cat = {}
+        for c in custom:
+            cat = c["category"]
+            if cat not in by_cat:
+                by_cat[cat] = []
+            by_cat[cat].append(c["name"])
+        crows = ""
+        for cat, names in sorted(by_cat.items()):
+            for name in names:
+                crows += '<tr><td class="tsum-type">' + cat + '</td><td colspan="2" class="tsum-latest">' + name + '</td></tr>'
+        custom_table = (
+            '<table><thead><tr><th>種別</th><th colspan="2">コンポーネント名</th></tr></thead>'
+            '<tbody>' + crows + '</tbody></table>'
+        )
+        panel_parts.append(
+            '<div id="comp-custom" class="comp-panel"><div class="card">' + custom_table + '</div></div>'
+        )
+    elif not btn_parts:
+        return '<div class="card"><p class="empty-note">研究済みコンポーネントなし</p></div>'
+
+    inner_bar = '<div class="inner-tab-bar">' + "".join(btn_parts) + "</div>"
+    return overview + inner_bar + "".join(panel_parts)
 
 def pct(completed, total):
     if not total:
@@ -865,7 +1009,7 @@ def _build_army_rows(formations):
         )
     return rows
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None):
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -1142,6 +1286,9 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     if not intel_html:
         intel_html = '<div class="card"><p class="empty-note">' + L("no_intel") + '</p></div>'
 
+    # --- コンポーネントタブ ---
+    components_html = _build_components_html(components) if components else '<div class="card"><p class="empty-note">データなし</p></div>'
+
     # --- 設計書タブ ---
     WEAPON_CATS = {2, 3, 26, 28, 39, 40}
     SENSOR_CATS = {13, 14, 34}
@@ -1305,6 +1452,19 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text2); text-align: right; }
     .army-name { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); }
     .army-row:hover td { background: var(--bg3) !important; }
+    .tech-overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px,1fr)); gap: 8px; margin-bottom: 16px; }
+    .tech-overview-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; cursor: pointer; transition: border-color .15s; }
+    .tech-overview-card:hover { border-color: var(--accent2); }
+    .tov-name { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+    .tov-count { font-family: 'Share Tech Mono', monospace; font-size: 20px; color: var(--accent2); }
+    .inner-tab-bar { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 0; border-bottom: 1px solid var(--border); margin-top: 4px; }
+    .inner-tab-btn { background: none; border: none; border-bottom: 2px solid transparent; color: var(--text2); font-size: 11px; padding: 5px 14px; cursor: pointer; font-family: 'Share Tech Mono', monospace; letter-spacing: 1px; margin-bottom: -1px; }
+    .inner-tab-btn.active { color: var(--accent2); border-bottom-color: var(--accent2); }
+    .comp-panel { display: none; padding-top: 12px; }
+    .comp-panel.active { display: block; }
+    .tsum-type { color: var(--text2); font-size: 12px; width: 40%; }
+    .tsum-count { text-align: center; font-family: 'Share Tech Mono', monospace; color: var(--text2); font-size: 12px; }
+    .tsum-latest { color: var(--accent2); font-size: 12px; font-weight: 500; }
     """
 
     warn_class = " warn" if unexplored_jp > 5 else ""
@@ -1332,6 +1492,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<button class="tab-btn" onclick="showTab(\'army\',this)">ARMY</button>',
         '<button class="tab-btn" onclick="showTab(\'designs\',this)">DESIGNS</button>',
         '<button class="tab-btn" onclick="showTab(\'intel\',this)">' + L("intel_tab") + '</button>',
+        '<button class="tab-btn" onclick="showTab(\'components\',this)">TECH</button>',
         '</div>',
 
         # === EMPIRE タブ ===
@@ -1414,6 +1575,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         intel_html,
         '</div>',  # /tab-intel
 
+        # === TECH (コンポーネント) タブ ===
+        '<div id="tab-components" class="tab-panel">',
+        components_html,
+        '</div>',  # /tab-components
+
         '<script>',
         'function showTab(id,btn){',
         'document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));',
@@ -1428,6 +1594,12 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         'd.style.display=open?"table-row":"none";',
         'var cell=row.querySelector(".army-name");',
         'cell.textContent=cell.textContent.replace(open?"▶":"▼",open?"▼":"▶");',
+        '}',
+        'function showCompTab(id,btn){',
+        'document.querySelectorAll(".comp-panel").forEach(function(p){p.classList.remove("active");});',
+        'document.querySelectorAll(".inner-tab-btn").forEach(function(b){b.classList.remove("active");});',
+        'document.getElementById(id).classList.add("active");',
+        'btn.classList.add("active");',
         '}',
         'function toggleObs(){',
         'var show=document.getElementById("show-obs").checked;',
@@ -1505,6 +1677,7 @@ def main():
     ground            = get_ground_formations(conn, game_id, race_id)
     colony_candidates = get_colony_candidates(conn, game_id, race_id)
     alien_intel       = get_alien_intel(conn, game_id, race_id)
+    components        = get_components(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -1531,7 +1704,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
