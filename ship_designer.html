@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Aurora 4x 艦船設計計算表</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Noto+Sans+JP:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e1a; --bg2: #111828; --bg3: #1a2236;
+  --accent: #00c8ff; --accent2: #00ff9d; --accent3: #f39c12;
+  --text: #cdd9f0; --text2: #7a93b8;
+  --border: #1e3050;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Noto Sans JP', sans-serif; font-size: 13px; padding: 24px; }
+
+h1 { font-family: 'Share Tech Mono', monospace; font-size: 18px; color: var(--accent); letter-spacing: 2px; margin-bottom: 4px; }
+.subtitle { font-size: 11px; color: var(--text2); margin-bottom: 20px; }
+
+/* トン数入力 */
+.top-bar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 14px 20px; margin-bottom: 20px;
+}
+.top-bar label { font-size: 12px; color: var(--text2); }
+.top-bar input[type=number] {
+  background: var(--bg3); border: 1px solid var(--accent); color: var(--accent);
+  padding: 6px 12px; border-radius: 4px; font-size: 20px;
+  font-family: 'Share Tech Mono', monospace; width: 160px; text-align: right;
+}
+.top-bar input:focus { outline: none; border-color: var(--accent2); }
+.hs-disp { font-family: 'Share Tech Mono', monospace; font-size: 16px; color: var(--accent2); }
+.hs-disp small { font-size: 11px; color: var(--text2); }
+
+/* タブ */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 0; }
+.tab-btn {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text2);
+  padding: 8px 18px; border-radius: 6px 6px 0 0; cursor: pointer;
+  font-family: 'Noto Sans JP', sans-serif; font-size: 12px;
+  border-bottom-color: var(--border); transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--accent); border-color: var(--accent); }
+.tab-btn.active {
+  background: var(--bg3); color: var(--accent); border-color: var(--accent);
+  border-bottom-color: var(--bg3); font-weight: 500;
+}
+
+/* パネル */
+.panel-wrap {
+  background: var(--bg3); border: 1px solid var(--accent);
+  border-radius: 0 8px 8px 8px; padding: 0; overflow: hidden;
+}
+
+.type-panel { display: none; }
+.type-panel.active { display: block; }
+
+/* 内部テーブル */
+table { border-collapse: collapse; width: 100%; }
+thead th {
+  background: var(--bg2); color: var(--text2); font-size: 10px;
+  letter-spacing: 1px; padding: 8px 12px; border: 1px solid var(--border);
+  text-align: center;
+}
+thead th.cat-th { text-align: left; min-width: 180px; }
+thead th.pct-th { width: 90px; }
+thead th.tons-th { width: 130px; }
+thead th.hs-th { width: 100px; color: var(--accent2); }
+
+tbody tr td { border: 1px solid var(--border); padding: 0; }
+tbody tr:hover td { background: rgba(255,255,255,0.025); }
+
+td.cat-cell {
+  padding: 10px 14px; background: var(--bg2);
+}
+td.cat-cell .cat-name { font-size: 13px; color: var(--text); }
+td.cat-cell .cat-note { font-size: 10px; color: var(--text2); margin-top: 2px; }
+
+td.pct-cell { text-align: center; vertical-align: middle; padding: 8px; }
+td.pct-cell input {
+  background: transparent; border: none; border-bottom: 1px dashed var(--accent3);
+  color: var(--accent3); font-family: 'Share Tech Mono', monospace;
+  font-size: 16px; width: 50px; text-align: right; padding: 2px 4px;
+}
+td.pct-cell input:focus { outline: none; border-bottom-color: var(--accent); }
+td.pct-cell .pct-sign { color: var(--text2); font-size: 12px; }
+
+td.tons-cell { text-align: right; padding: 8px 16px; vertical-align: middle; }
+td.tons-cell .tons-v { font-family: 'Share Tech Mono', monospace; font-size: 15px; color: var(--text); }
+td.tons-cell .tons-u { font-size: 10px; color: var(--text2); }
+
+td.hs-cell { text-align: right; padding: 8px 16px; vertical-align: middle; }
+td.hs-cell .hs-v { font-family: 'Share Tech Mono', monospace; font-size: 15px; color: var(--accent2); }
+td.hs-cell .hs-u { font-size: 10px; color: var(--text2); }
+
+.zero td.tons-cell .tons-v,
+.zero td.hs-cell .hs-v { color: var(--text2); opacity: 0.35; }
+
+/* 合計・余裕 */
+tfoot td {
+  border: 1px solid var(--border); padding: 9px 16px;
+  font-family: 'Share Tech Mono', monospace; font-size: 13px;
+}
+tfoot tr.total-row td { background: #0e1a2e; }
+tfoot tr.remain-row td { background: #0d1f10; }
+.total-label { font-size: 10px; color: var(--text2); letter-spacing: 1px; text-align: left !important; padding-left: 14px !important; }
+.pct-total { text-align: center !important; }
+.tons-total { text-align: right !important; }
+.hs-total { text-align: right !important; }
+.over { color: #e74c3c; }
+.ok { color: var(--accent3); }
+.pos { color: var(--accent2); }
+.neg { color: #e74c3c; }
+
+/* 凡例 */
+.legend { margin-top: 16px; display: flex; gap: 20px; flex-wrap: wrap; font-size: 11px; color: var(--text2); }
+.leg { display: flex; align-items: center; gap: 5px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<h1>[ SHIP DESIGN CALCULATOR ]</h1>
+<div class="subtitle">艦種タブを選択 → 総トン数を入力 → HS自動計算（1 HS = 50 tons）</div>
+
+<div class="top-bar">
+  <label>総トン数</label>
+  <input type="number" id="total-tons" value="10000" min="50" max="9999999" step="50" oninput="calcAll()">
+  <span style="color:var(--text2)">tons</span>
+  <span class="hs-disp" id="total-hs-disp">200 <small>HS</small></span>
+  <span style="font-size:11px;color:var(--text2);margin-left:4px;">— %は直接編集できます</span>
+</div>
+
+<!-- 設計テキスト解析 -->
+<div id="parser-section" style="margin-bottom:20px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+    <span style="font-size:12px;color:var(--text2);">▶ 設計テキスト解析（貼り付けて自動入力）</span>
+    <button onclick="toggleParser()" id="parser-toggle-btn"
+      style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);padding:3px 12px;border-radius:4px;cursor:pointer;font-size:11px;">開く</button>
+  </div>
+  <div id="parser-body" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+    <textarea id="design-text" rows="10" placeholder="Aurora 4x の艦船設計テキストをここに貼り付けてください..."
+      style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);
+             font-family:'Share Tech Mono',monospace;font-size:11px;padding:10px;border-radius:4px;
+             resize:vertical;line-height:1.6;"></textarea>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:10px;flex-wrap:wrap;">
+      <button onclick="parseDesign()"
+        style="background:#1a3a4a;color:var(--accent);border:1px solid var(--accent);
+               padding:6px 18px;border-radius:4px;cursor:pointer;font-size:12px;">解析</button>
+      <label style="font-size:11px;color:var(--text2);">
+        燃料換算:
+        <input type="number" id="fuel-ratio" value="50000" min="1000" max="200000" step="1000"
+          style="background:var(--bg3);border:1px solid var(--border);color:var(--accent3);
+                 padding:3px 6px;border-radius:4px;font-size:11px;width:90px;text-align:right;">
+        <span style="color:var(--text2)">L / HS</span>
+      </label>
+      <span style="font-size:10px;color:var(--text2);">※ 燃料タンク技術で変動（基本 50,000 L/HS）</span>
+    </div>
+    <div id="parse-result" style="margin-top:14px;display:none;">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;">── 解析結果（確定: 白 / 推定: オレンジ / 不明: グレー）</div>
+      <table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:5px 10px;border:1px solid var(--border);color:var(--text2);background:var(--bg3);font-size:10px;">カテゴリ</th>
+            <th style="padding:5px 10px;border:1px solid var(--border);color:var(--text2);background:var(--bg3);font-size:10px;">コンポーネント</th>
+            <th style="padding:5px 10px;border:1px solid var(--border);color:var(--text2);background:var(--bg3);font-size:10px;">tons</th>
+            <th style="padding:5px 10px;border:1px solid var(--border);color:var(--text2);background:var(--bg3);font-size:10px;">HS</th>
+            <th style="padding:5px 10px;border:1px solid var(--border);color:var(--text2);background:var(--bg3);font-size:10px;">%</th>
+          </tr>
+        </thead>
+        <tbody id="parse-tbody"></tbody>
+      </table>
+      <div id="parse-note" style="margin-top:8px;font-size:10px;color:var(--text2);"></div>
+    </div>
+  </div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div class="panel-wrap" id="panels"></div>
+
+<div class="legend">
+  <div class="leg"><span class="dot" style="background:var(--accent3)"></span>%（編集可）</div>
+  <div class="leg"><span class="dot" style="background:var(--text)"></span>tons</div>
+  <div class="leg"><span class="dot" style="background:var(--accent2)"></span>HS</div>
+  <div class="leg"><span class="dot" style="background:#e74c3c"></span>超過警告</div>
+</div>
+
+<!-- 速度・必要EP計算 -->
+<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 20px;margin-top:20px;">
+  <div style="font-family:'Share Tech Mono',monospace;font-size:12px;color:var(--accent);letter-spacing:2px;text-transform:uppercase;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border);">速度・必要EP 計算</div>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:11px;color:var(--text2);letter-spacing:1px;text-transform:uppercase;">総トン数 (t)</label>
+      <input type="number" id="ep-tons" min="1" step="500"
+        style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;width:160px;"
+        oninput="epCalc()">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:11px;color:var(--text2);letter-spacing:1px;text-transform:uppercase;">目標速度 (km/s)</label>
+      <input type="number" id="ep-speed" value="1000" min="1" step="100"
+        style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;width:140px;"
+        oninput="epCalc()">
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;">
+      <label style="font-size:11px;color:var(--text2);letter-spacing:1px;text-transform:uppercase;">使用エンジン数（任意）</label>
+      <input type="number" id="ep-engines" min="1" step="1" placeholder="空欄=EPのみ"
+        style="background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 10px;font-size:13px;font-family:inherit;width:160px;"
+        oninput="epCalc()">
+    </div>
+  </div>
+  <div id="ep-result"></div>
+</div>
+
+<script>
+const SHIP_TYPES = [
+  { id: 'beam',    label: 'ビーム戦闘艦' },
+  { id: 'missile', label: 'ミサイル戦闘艦' },
+  { id: 'survey',  label: '調査船' },
+  { id: 'carrier', label: 'キャリア' },
+  { id: 'pd',      label: 'PDエスコート' },
+];
+
+const CATEGORIES = [
+  { name: 'エンジン',         note: '',                          pcts: [25, 20, 15, 15, 25] },
+  { name: '武器 / 発射装置',   note: 'ランチャー・マガジン含む',      pcts: [20, 30,  0,  5, 25] },
+  { name: 'センサー / FC',    note: 'ファイアコントロール含む',      pcts: [ 5,  5, 40,  5, 10] },
+  { name: '鎧（装甲）',        note: '',                          pcts: [15, 10,  5, 10, 10] },
+  { name: '燃料',             note: '',                          pcts: [15, 20, 30, 15, 15] },
+  { name: 'その他',           note: '技術・乗組員・操舵室・格納庫など', pcts: [20, 15, 10, 50, 15] },
+];
+
+const tabsEl = document.getElementById('tabs');
+const panelsEl = document.getElementById('panels');
+
+SHIP_TYPES.forEach((type, ti) => {
+  // タブボタン
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn' + (ti === 0 ? ' active' : '');
+  btn.textContent = type.label;
+  btn.onclick = () => switchTab(ti);
+  tabsEl.appendChild(btn);
+
+  // パネル
+  const panel = document.createElement('div');
+  panel.className = 'type-panel' + (ti === 0 ? ' active' : '');
+  panel.id = 'panel-' + ti;
+
+  const table = document.createElement('table');
+
+  // thead
+  table.innerHTML = `
+    <thead><tr>
+      <th class="cat-th">カテゴリ</th>
+      <th class="pct-th">割合 %</th>
+      <th class="tons-th">トン数</th>
+      <th class="hs-th">HS</th>
+    </tr></thead>`;
+
+  // tbody
+  const tbody = document.createElement('tbody');
+  CATEGORIES.forEach((cat, ci) => {
+    const tr = document.createElement('tr');
+    tr.id = `row-${ti}-${ci}`;
+    if (cat.pcts[ti] === 0) tr.classList.add('zero');
+    tr.innerHTML = `
+      <td class="cat-cell">
+        <div class="cat-name">${cat.name}</div>
+        ${cat.note ? `<div class="cat-note">${cat.note}</div>` : ''}
+      </td>
+      <td class="pct-cell">
+        <input type="number" id="pct-${ti}-${ci}" value="${cat.pcts[ti]}" min="0" max="100" step="1" oninput="calcOne(${ti})">
+        <span class="pct-sign">%</span>
+      </td>
+      <td class="tons-cell"><span class="tons-v" id="tons-${ti}-${ci}">—</span> <span class="tons-u">t</span></td>
+      <td class="hs-cell"><span class="hs-v" id="hs-${ti}-${ci}">—</span> <span class="hs-u">HS</span></td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  // tfoot
+  const tfoot = document.createElement('tfoot');
+  tfoot.innerHTML = `
+    <tr class="total-row">
+      <td class="total-label">合 計</td>
+      <td class="pct-total" id="sum-pct-${ti}">—</td>
+      <td class="tons-total" id="sum-tons-${ti}">—</td>
+      <td class="hs-total" id="sum-hs-${ti}">—</td>
+    </tr>
+    <tr class="remain-row">
+      <td class="total-label">余 裕</td>
+      <td class="pct-total" id="rem-pct-${ti}">—</td>
+      <td class="tons-total" id="rem-tons-${ti}">—</td>
+      <td class="hs-total" id="rem-hs-${ti}">—</td>
+    </tr>`;
+  table.appendChild(tfoot);
+
+  panel.appendChild(table);
+  panelsEl.appendChild(panel);
+});
+
+function switchTab(ti) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', i === ti));
+  document.querySelectorAll('.type-panel').forEach((p, i) => p.classList.toggle('active', i === ti));
+}
+
+function calcOne(ti) {
+  const total = parseFloat(document.getElementById('total-tons').value) || 0;
+  let sumPct = 0, sumTons = 0;
+
+  CATEGORIES.forEach((_, ci) => {
+    const pct = parseFloat(document.getElementById(`pct-${ti}-${ci}`).value) || 0;
+    const tons = Math.round(total * pct / 100);
+    const hs = (tons / 50).toFixed(1);
+    sumPct += pct;
+    sumTons += tons;
+
+    const row = document.getElementById(`row-${ti}-${ci}`);
+    row.classList.toggle('zero', pct === 0);
+
+    document.getElementById(`tons-${ti}-${ci}`).textContent = pct === 0 ? '—' : tons.toLocaleString();
+    document.getElementById(`hs-${ti}-${ci}`).textContent = pct === 0 ? '—' : hs;
+  });
+
+  const sumHs = (sumTons / 50).toFixed(1);
+  const remTons = total - sumTons;
+  const remHs = (remTons / 50).toFixed(1);
+  const remPct = Math.round((100 - sumPct) * 10) / 10;
+  const over = sumPct > 100;
+
+  document.getElementById(`sum-pct-${ti}`).innerHTML = `<span class="${over ? 'over' : 'ok'}">${sumPct}%</span>`;
+  document.getElementById(`sum-tons-${ti}`).textContent = sumTons.toLocaleString() + ' t';
+  document.getElementById(`sum-hs-${ti}`).textContent = sumHs + ' HS';
+
+  document.getElementById(`rem-pct-${ti}`).innerHTML = `<span class="${remPct < 0 ? 'neg' : 'pos'}">${remPct >= 0 ? '+' : ''}${remPct}%</span>`;
+  document.getElementById(`rem-tons-${ti}`).innerHTML = `<span class="${remTons < 0 ? 'neg' : 'pos'}">${remTons >= 0 ? '+' : ''}${remTons.toLocaleString()} t</span>`;
+  document.getElementById(`rem-hs-${ti}`).innerHTML = `<span class="${remTons < 0 ? 'neg' : 'pos'}">${remTons >= 0 ? '+' : ''}${remHs} HS</span>`;
+}
+
+function calcAll() {
+  const total = parseFloat(document.getElementById('total-tons').value) || 0;
+  document.getElementById('total-hs-disp').innerHTML = `${(total/50).toLocaleString()} <small>HS</small>`;
+  SHIP_TYPES.forEach((_, ti) => calcOne(ti));
+}
+
+calcAll();
+
+// ===== 速度・必要EP計算 =====
+function epCalc() {
+  const tons = parseFloat(document.getElementById('ep-tons').value) || 0;
+  const speed = parseFloat(document.getElementById('ep-speed').value) || 0;
+  const nEngStr = document.getElementById('ep-engines').value.trim();
+  const el = document.getElementById('ep-result');
+  if (tons <= 0 || speed <= 0) { el.innerHTML = ''; return; }
+  const reqEP = speed * tons / 50000;
+  let html = '<div style="font-size:14px;margin-bottom:6px;">必要合計EP: '
+    + '<span style="font-family:\'Share Tech Mono\',monospace;font-size:22px;color:var(--accent2);">' + reqEP.toFixed(2) + '</span>'
+    + '  <span style="font-size:11px;color:var(--text2);">(' + speed.toLocaleString() + ' km/s × ' + tons.toLocaleString() + 't ÷ 50,000)</span></div>';
+  if (nEngStr !== '') {
+    const n = parseInt(nEngStr);
+    if (n >= 1) {
+      const epPer = reqEP / n;
+      html += '<div style="font-size:13px;color:var(--accent3);">→ エンジン' + n + '基使用なら 1基あたり EP <b>' + epPer.toFixed(2) + '</b> 以上が必要</div>';
+    }
+  }
+  el.innerHTML = html;
+}
+
+// 上部トン数入力と連動
+document.addEventListener('DOMContentLoaded', function() {
+  const globalTons = document.getElementById('total-tons');
+  const epTons = document.getElementById('ep-tons');
+  epTons.value = globalTons.value;
+  epCalc();
+  globalTons.addEventListener('input', function() {
+    epTons.value = globalTons.value;
+    epCalc();
+  });
+});
+
+// ===== 設計テキスト解析 =====
+function toggleParser() {
+  const body = document.getElementById('parser-body');
+  const btn = document.getElementById('parser-toggle-btn');
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  btn.textContent = open ? '閉じる' : '開く';
+}
+
+// コンポーネント名 → カテゴリマッピング
+function classifyComponent(name) {
+  const n = name.toLowerCase();
+  if (/engine|drive|thruster/.test(n)) return 'engine';
+  if (/launcher|torpedo|railgun|gauss|laser|meson|plasma|particle beam|microwave|carronade|spinal/.test(n)) return 'weapon';
+  if (/magazine/.test(n)) return 'weapon';
+  if (/fire control|fc\d|combat management/.test(n)) return 'sensor';
+  if (/sensor|search|thermal|em detection|gravitational/.test(n)) return 'sensor';
+  if (/jump drive|transit/.test(n)) return 'other';
+  if (/hangar|fighter/.test(n)) return 'other';
+  return 'other';
+}
+
+const CAT_LABELS = {
+  engine: 'エンジン',
+  weapon: '武器 / 発射装置',
+  sensor: 'センサー / FC',
+  armor:  '鎧（装甲）',
+  fuel:   '燃料',
+  other:  'その他',
+  unknown:'不明',
+};
+const CAT_COLORS = {
+  engine: 'var(--accent)',
+  weapon: '#e74c3c',
+  sensor: '#9b59b6',
+  armor:  '#95a5a6',
+  fuel:   '#3498db',
+  other:  'var(--text2)',
+  unknown:'#444',
+};
+
+function parseDesign() {
+  const text = document.getElementById('design-text').value;
+  if (!text.trim()) return;
+
+  const fuelRatio = parseFloat(document.getElementById('fuel-ratio').value) || 50000; // L per HS
+
+  // ── 総トン数
+  const totalMatch = text.match(/([\d,]+)\s*tons/i);
+  if (!totalMatch) { alert('総トン数が見つかりませんでした。'); return; }
+  const total = parseInt(totalMatch[1].replace(/,/g, ''));
+  document.getElementById('total-tons').value = total;
+  calcAll();
+
+  const items = []; // { cat, name, tons, confidence }
+  let accounted = 0;
+
+  // ── "Size X.XX Component (N)" → 確定
+  const sizeRe = /Size\s*([\d.]+)\s+(.+?)\s*\((\d+)\)/gi;
+  let m;
+  while ((m = sizeRe.exec(text)) !== null) {
+    const hs = parseFloat(m[1]);
+    const name = m[2].trim();
+    const count = parseInt(m[3]);
+    const tons = Math.round(hs * 50 * count);
+    const cat = classifyComponent(name);
+    items.push({ cat, name: name + (count > 1 ? ` ×${count}` : ''), tons, confidence: 'sure' });
+    accounted += tons;
+  }
+
+  // ── 燃料 → 推定
+  const fuelMatch = text.match(/Fuel Capacity\s*([\d,]+)\s*Litres/i);
+  if (fuelMatch) {
+    const litres = parseInt(fuelMatch[1].replace(/,/g, ''));
+    const tons = Math.round((litres / fuelRatio) * 50);
+    items.push({ cat: 'fuel', name: `燃料タンク (${litres.toLocaleString()} L)`, tons, confidence: 'est' });
+    accounted += tons;
+  }
+
+  // ── 装甲 → 推定（Armour layers-columns、1列=5t 標準デュラニウム）
+  const armourMatch = text.match(/Armour\s*(\d+)-(\d+)/i);
+  if (armourMatch) {
+    const layers = parseInt(armourMatch[1]);
+    const cols = parseInt(armourMatch[2]);
+    const tons = layers * cols * 5; // 標準デュラニウム: 5t/列
+    items.push({ cat: 'armor', name: `装甲 ${layers}層 × ${cols}列 (推定)`, tons, confidence: 'est' });
+    accounted += tons;
+  }
+
+  // ── エンジンが未パース → "Engine" 行から名前だけ拾ってunknownに
+  const engineLines = [...text.matchAll(/^(.+?Engine.+?)(?:\s+\(\d+\))?(?:\s+Power|$)/gim)];
+  const hasEngine = items.some(i => i.cat === 'engine');
+  if (!hasEngine && engineLines.length > 0) {
+    items.push({ cat: 'unknown', name: engineLines[0][1].trim() + ' (サイズ不明)', tons: 0, confidence: 'unknown' });
+  }
+
+  // ── 残り → その他に割当
+  const remainder = total - accounted;
+
+  // ── 描画
+  const tbody = document.getElementById('parse-tbody');
+  tbody.innerHTML = '';
+
+  const confidenceLabel = { sure: '確定', est: '推定', unknown: '不明' };
+  const confidenceColor = { sure: 'var(--text)', est: 'var(--accent3)', unknown: '#555' };
+
+  items.forEach(item => {
+    const pct = total > 0 ? (item.tons / total * 100).toFixed(1) : '—';
+    const hs = item.tons > 0 ? (item.tons / 50).toFixed(1) : '—';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:5px 10px;border:1px solid var(--border);color:${CAT_COLORS[item.cat]};white-space:nowrap;">${CAT_LABELS[item.cat]}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);color:${confidenceColor[item.confidence]};font-size:11px;">${item.name}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:${confidenceColor[item.confidence]};">${item.tons > 0 ? item.tons.toLocaleString() : '?'}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:var(--accent2);">${hs}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:${confidenceColor[item.confidence]};">${item.tons > 0 ? pct + '%' : '?'}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  // 残り行
+  if (remainder > 0) {
+    const pct = (remainder / total * 100).toFixed(1);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:5px 10px;border:1px solid var(--border);color:var(--text2);">その他 / 未確定</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);color:#555;font-size:11px;">エンジン・FC・センサー・乗組員・技術・操舵室など</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:#888;">${remainder.toLocaleString()}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:#888;">${(remainder/50).toFixed(1)}</td>
+      <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;color:#888;">${pct}%</td>`;
+    tbody.appendChild(tr);
+  }
+
+  // 合計行
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td colspan="2" style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-size:10px;color:var(--text2);background:var(--bg3);">合計</td>
+    <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;background:var(--bg3);color:var(--accent);">${total.toLocaleString()}</td>
+    <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;background:var(--bg3);color:var(--accent2);">${(total/50).toFixed(1)}</td>
+    <td style="padding:5px 10px;border:1px solid var(--border);text-align:right;font-family:'Share Tech Mono',monospace;background:var(--bg3);color:var(--accent);">100%</td>`;
+  tbody.appendChild(tr);
+
+  document.getElementById('parse-note').innerHTML =
+    '白: Size X.XX から確定計算 &nbsp;|&nbsp; オレンジ: 推定値（燃料換算・装甲5t/列を仮定）&nbsp;|&nbsp; ' +
+    'グレー: サイズ未取得（エンジン・FC・センサーはテキストに HS が含まれないため）';
+  document.getElementById('parse-result').style.display = 'block';
+}
+</script>
+</body>
+</html>
