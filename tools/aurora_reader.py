@@ -194,7 +194,7 @@ def get_ships(conn, game_id, race_id):
         SELECT s.ShipName, s.FleetID, s.Fuel, s.MaintenanceState, sc.ClassName
         FROM FCT_Ship s JOIN FCT_ShipClass sc ON s.ShipClassID = sc.ShipClassID
         WHERE s.GameID=? AND s.RaceID=? AND s.Destroyed=0 AND s.ShippingLineID=0
-        ORDER BY s.ShipName
+        ORDER BY sc.ClassName, s.ShipName
     """, (game_id, race_id))
     return [dict(r) for r in cur.fetchall()]
 
@@ -1470,8 +1470,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         status = '<span class="badge-warn">' + L("needs_maint") + '</span>' if maint and maint > 0 else L("ok")
         ship_rows += (
             '<tr>'
-            '<td>' + s["ShipName"] + '</td>'
-            '<td>' + s["ClassName"] + '</td>'
+            '<td>' + s["ShipName"] + ' <span class="hull-badge">' + s["ClassName"] + '</span></td>'
             '<td>' + fleet_name + '</td>'
             '<td>' + f'{fuel:,}' + '</td>'
             '<td>' + status + '</td>'
@@ -1767,6 +1766,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     .pop-name { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
     .pop-detail { font-size: 11px; color: var(--text2); }
     .badge-cap { display: inline-block; font-size: 10px; background: #1a3a4a; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+    .hull-badge { display: inline-block; font-size: 10px; background: var(--bg3); color: var(--text2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; margin-left: 5px; vertical-align: middle; font-family: 'Share Tech Mono', monospace; letter-spacing: 0.5px; }
     .badge-warn { display: inline-block; font-size: 10px; background: #3a2a0a; color: var(--warn); border: 1px solid var(--warn); border-radius: 3px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
     .empty-note { color: var(--text2); font-size: 12px; padding: 8px 0; }
     .sys-name { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--accent); }
@@ -1896,7 +1896,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 
         '<div class="two-col">',
         '<div class="card"><div class="card-title">' + L("mineral_card") + '</div><table><thead><tr><th>' + L("th_mineral") + '</th><th>' + L("th_stock") + '</th><th></th></tr></thead><tbody>' + mineral_rows + '</tbody></table></div>',
-        '<div class="card"><div class="card-title">Active Ships</div><table><thead><tr><th>' + L("th_ship") + '</th><th>' + L("th_class") + '</th><th>' + L("th_fleet") + '</th><th>' + L("th_fuel") + '</th><th>' + L("th_status") + '</th></tr></thead><tbody>' + ship_rows + '</tbody></table></div>',
+        '<div class="card"><div class="card-title">Active Ships</div><table><thead><tr><th>' + L("th_ship") + '</th><th>' + L("th_fleet") + '</th><th>' + L("th_fuel") + '</th><th>' + L("th_status") + '</th></tr></thead><tbody>' + ship_rows + '</tbody></table></div>',
         '</div>',
 
         '<div class="card"><div class="card-title">Shipyards</div><table><thead><tr><th>' + L("th_name") + '</th><th>' + L("th_type") + '</th><th>' + L("th_slipways") + '</th><th>' + L("th_maxcap") + '</th></tr></thead><tbody>' + sy_rows + '</tbody></table></div>',
