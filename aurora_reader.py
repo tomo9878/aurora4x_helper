@@ -388,7 +388,7 @@ def get_ship_classes(conn, game_id, race_id):
                GeoSurvey, GravSurvey, FuelCapacity, ShieldStrength,
                MilitaryEngines
         FROM FCT_ShipClass
-        WHERE GameID=? AND RaceID=? AND AutomatedDesignID=0
+        WHERE GameID=? AND RaceID=?
         ORDER BY Obsolete, ShipClassID
     """, (game_id, race_id))
     classes = [dict(r) for r in cur.fetchall()]
