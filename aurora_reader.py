@@ -1298,7 +1298,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
             jp_str = '<span style="color:#00ff9d">' + L("all_clear") + '</span>'
         mins = s["minerals"]
         top3 = sorted(mins.items(), key=lambda x: x[1], reverse=True)[:3]
-        min_str = " / ".join(MINERAL_NAMES.get(mid, "?") + " " + f"{amt:,}" for mid, amt in top3) if top3 else "—"
+        min_str = " ".join(MINERAL_NAMES.get(mid, "?")[:3] for mid, amt in top3) if top3 else "—"
         disc = aurora_time(s["DiscoveredTime"])
         sys_rows += (
             '<tr>'
@@ -1645,7 +1645,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<button class="tab-btn" onclick="showTab(\'army\',this)">ARMY</button>',
         '<button class="tab-btn" onclick="showTab(\'designs\',this)">DESIGNS</button>',
         '<button class="tab-btn" onclick="showTab(\'intel\',this)">' + L("intel_tab") + '</button>',
-        '<button class="tab-btn" onclick="showTab(\'components\',this)">TECH</button>',
+        # TECH tab button intentionally hidden from nav (data/HTML kept for future use)
         '</div>',
 
         # === EMPIRE タブ ===

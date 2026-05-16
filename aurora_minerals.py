@@ -184,9 +184,10 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
                 else:
                     acc_color = "#e74c3c"
                 total_weighted += amt * acc
+                gas_tag = ' 🪐' if (mid == 8 and b.get("body_type") == 4) else ''
                 cells += (
                     '<td class="min-cell has-mineral">'
-                    '<div class="min-amount">' + f'{amt:,}' + '</div>'
+                    '<div class="min-amount">' + f'{amt:,}' + gas_tag + '</div>'
                     '<div class="min-acc" style="color:' + acc_color + '">' + str(acc) + '</div>'
                     '</td>'
                 )
@@ -412,7 +413,7 @@ def main():
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print("\n✅ 出力: " + out_path)
+    print("\n[OK] 出力: " + out_path)
     print("完了！ブラウザで aurora_minerals.html を開いてください。")
 
 if __name__ == "__main__":
