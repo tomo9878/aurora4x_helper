@@ -69,6 +69,30 @@ def get_orbital_mining_diameter(conn, game_id, race_id):
     row = cur.fetchone()
     return int(row["AdditionalInfo"]) if row else 0
 
+def get_stockpile_data(conn, game_id, race_id):
+    """植民地の鉱物備蓄データを取得"""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT PopName,
+            Duranium, Neutronium, Corbomite, Tritanium, Boronide,
+            Mercassium, Vendarite, Sorium, Uridium, Corundium, Gallicite
+        FROM FCT_Population
+        WHERE GameID=? AND RaceID=? AND Population > 0
+        ORDER BY Population DESC
+    """, (game_id, race_id))
+    rows = cur.fetchall()
+    col_names = ["Duranium","Neutronium","Corbomite","Tritanium","Boronide",
+                 "Mercassium","Vendarite","Sorium","Uridium","Corundium","Gallicite"]
+    result = []
+    for r in rows:
+        minerals = {}
+        for i, name in enumerate(col_names):
+            val = r[name]
+            if val and val > 0:
+                minerals[i + 1] = val
+        result.append({"pop_name": r["PopName"], "minerals": minerals})
+    return result
+
 def get_mineral_data(conn, game_id, race_id):
     """調査済み天体の鉱物データを取得"""
     cur = conn.cursor()
@@ -142,7 +166,9 @@ def get_mineral_data(conn, game_id, race_id):
         })
     return result
 
-def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
+def build_html(game, race, bodies, mining_rate, stockpiles=None, orbital_diameter=0):
+    if stockpiles is None:
+        stockpiles = []
     generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     race_name = race["RaceName"]
     game_name = game["GameName"]
@@ -257,6 +283,19 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
     .gsp-remain { color: #f39c12; font-weight: bold; }
     .gsp-done { color: #2ecc71; }
     .footer { margin-top: 20px; font-size: 11px; color: var(--text2); text-align: right; }
+
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 0; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+    .tab-btn { background: var(--bg2); color: var(--text2); border: 1px solid var(--border); border-bottom: none;
+               padding: 6px 18px; cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 12px;
+               letter-spacing: 1px; border-radius: 4px 4px 0 0; margin-bottom: -1px; }
+    .tab-btn.active { background: var(--bg3); color: var(--accent); border-bottom: 1px solid var(--bg3); }
+    .tab-btn:hover { color: var(--accent); }
+    .tab-panel { display: none; padding-top: 14px; }
+    .tab-panel.active { display: block; }
+
+    .stockpile-table td.pop-name { font-family: 'Share Tech Mono', monospace; color: var(--accent); white-space: nowrap; }
+    .stockpile-table td.stk-cell { text-align: right; min-width: 90px; font-size: 12px; color: var(--text2); }
+    .stockpile-table td.stk-cell.has-stock { color: var(--text); }
     """
 
     js = """
@@ -342,6 +381,13 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         }
       });
     }
+
+    function switchTab(name) {
+      document.querySelectorAll('.tab-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.tab === name));
+      document.querySelectorAll('.tab-panel').forEach(p =>
+        p.classList.toggle('active', p.id === 'tab-' + name));
+    }
     """
 
     mineral_options = "".join(
@@ -355,6 +401,31 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         for s in systems
     )
 
+    # --- STOCKPILE tab ---
+    def make_stockpile_row(sp):
+        cells = ""
+        for mid in range(1, 12):
+            val = sp["minerals"].get(mid, 0)
+            if val:
+                cells += '<td class="stk-cell has-stock">' + f'{int(val):,}' + '</td>'
+            else:
+                cells += '<td class="stk-cell">—</td>'
+        return (
+            '<tr>'
+            '<td class="pop-name">' + sp["pop_name"] + '</td>'
+            + cells +
+            '</tr>'
+        )
+
+    stockpile_rows_html = "".join(make_stockpile_row(sp) for sp in stockpiles) if stockpiles else (
+        '<tr><td colspan="12" style="text-align:center;color:var(--text2);padding:20px;">植民地データなし</td></tr>'
+    )
+
+    stockpile_header = "".join(
+        '<th class="min-header">' + MINERAL_NAMES[mid] + '</th>'
+        for mid in range(1, 12)
+    )
+
     html = (
         '<!DOCTYPE html><html lang="ja"><head>'
         '<meta charset="UTF-8">'
@@ -364,6 +435,13 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '</head><body>'
         '<h1>[ ' + race_name + ' ] MINERAL RESOURCES</h1>'
         '<div class="meta">GAME: ' + game_name + ' &nbsp;|&nbsp; Mining Rate: ' + str(mining_rate) + ' tons &nbsp;|&nbsp; Orbital Mining: ' + (str(orbital_diameter) + ' km diameter' if orbital_diameter else 'none') + ' &nbsp;|&nbsp; GENERATED: ' + generated_at + '</div>'
+        '<div class="tab-bar">'
+        '<button class="tab-btn active" data-tab="deposits" onclick="switchTab(\'deposits\')">DEPOSITS</button>'
+        '<button class="tab-btn" data-tab="stockpile" onclick="switchTab(\'stockpile\')">STOCKPILE</button>'
+        '</div>'
+
+        # DEPOSITS tab
+        '<div id="tab-deposits" class="tab-panel active">'
         '<div class="controls">'
         '<label>星系: <select id="system-filter" onchange="filterSystem()"><'+system_options+'</select></label>'
         '<label>自動鉱山 <input type="number" id="mine-count" value="10" min="1" max="9999"> 台</label>'
@@ -380,6 +458,20 @@ def build_html(game, race, bodies, mining_rate, orbital_diameter=0):
         '</tr></thead>'
         '<tbody id="tbody">' + rows_html + '</tbody>'
         '</table></div>'
+        '</div>'
+
+        # STOCKPILE tab
+        '<div id="tab-stockpile" class="tab-panel">'
+        '<div class="table-wrap">'
+        '<table class="stockpile-table">'
+        '<thead><tr>'
+        '<th style="text-align:left;">植民地</th>'
+        + stockpile_header +
+        '</tr></thead>'
+        '<tbody>' + stockpile_rows_html + '</tbody>'
+        '</table></div>'
+        '</div>'
+
         '<div class="footer">Aurora 4x Mineral Viewer &mdash; ' + generated_at + '</div>'
         '<script>' + js + '</script>'
         '</body></html>'
@@ -404,12 +496,14 @@ def main():
 
     bodies = get_mineral_data(conn, game["GameID"], race["RaceID"])
     print("調査済み天体: " + str(len(bodies)) + " 件")
+    stockpiles = get_stockpile_data(conn, game["GameID"], race["RaceID"])
+    print("植民地: " + str(len(stockpiles)) + " 件")
     conn.close()
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_path = os.path.join(base_dir, "aurora_minerals.html")
 
-    html = build_html(game, race, bodies, mining_rate, orbital_diameter)
+    html = build_html(game, race, bodies, mining_rate, stockpiles, orbital_diameter)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
