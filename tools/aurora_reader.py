@@ -878,6 +878,99 @@ def get_engine_techs(conn, game_id, race_id):
             engines.append({"name": name, "ep": ep})
     return engines
 
+def get_mineral_deposits(conn, game_id, race_id):
+    """MINERALSタブ用: 調査済み天体の鉱物埋蔵量と帝国備蓄を取得"""
+    cur = conn.cursor()
+
+    # 軌道採掘最大直径
+    cur.execute("""
+        SELECT ts.AdditionalInfo
+        FROM FCT_RaceTech rt
+        JOIN FCT_TechSystem ts ON rt.TechID = ts.TechSystemID
+        WHERE rt.GameID=? AND rt.RaceID=?
+        AND ts.Name LIKE 'Maximum Orbital Mining Diameter%'
+        ORDER BY ts.AdditionalInfo DESC
+        LIMIT 1
+    """, (game_id, race_id))
+    row = cur.fetchone()
+    orbital_diameter = int(row["AdditionalInfo"]) if row else 0
+
+    # 鉱物埋蔵量
+    cur.execute("""
+        SELECT
+            sb.SystemBodyID, NULLIF(sb.Name,'') as BodyName,
+            sb.BodyClass, sb.BodyTypeID, sb.Radius,
+            sb.PlanetNumber, sb.OrbitNumber, sb.ParentBodyID,
+            sb.GroundMineralSurvey,
+            ss.Name as SystemName,
+            md.MaterialID, md.Amount, md.Accessibility
+        FROM FCT_MineralDeposit md
+        JOIN FCT_SystemBody sb ON md.SystemBodyID=sb.SystemBodyID AND sb.GameID=?
+        JOIN FCT_SystemBodySurveys sbs ON md.SystemBodyID=sbs.SystemBodyID
+            AND sbs.GameID=? AND sbs.RaceID=?
+        JOIN FCT_RaceSysSurvey ss ON md.SystemID=ss.SystemID
+            AND ss.GameID=? AND ss.RaceID=?
+        WHERE md.GameID=? AND md.Amount > 0
+        ORDER BY ss.Name, sb.PlanetNumber, sb.OrbitNumber, md.MaterialID
+    """, (game_id, game_id, race_id, game_id, race_id, game_id))
+    rows = cur.fetchall()
+
+    parent_ids = set(r["ParentBodyID"] for r in rows if r["ParentBodyID"])
+    parent_map = {}
+    if parent_ids:
+        ph = ",".join("?" * len(parent_ids))
+        cur.execute(
+            "SELECT SystemBodyID, Name, PlanetNumber FROM FCT_SystemBody WHERE SystemBodyID IN (" + ph + ")",
+            list(parent_ids)
+        )
+        for p in cur.fetchall():
+            parent_map[p["SystemBodyID"]] = dict(p)
+
+    bodies = {}
+    for r in rows:
+        body_name = make_body_name(dict(r), parent_map)
+        key = (r["SystemName"], body_name, r["SystemBodyID"])
+        if key not in bodies:
+            bodies[key] = {
+                "minerals": {}, "body_class": r["BodyClass"],
+                "body_type": r["BodyTypeID"], "radius": r["Radius"] or 0,
+                "gsp": r["GroundMineralSurvey"] or 0,
+            }
+        bodies[key]["minerals"][r["MaterialID"]] = {
+            "amount": r["Amount"], "accessibility": r["Accessibility"]
+        }
+
+    result = []
+    for (sys_name, body_name, _), data in bodies.items():
+        result.append({
+            "system": sys_name, "body": body_name,
+            "body_class": data["body_class"], "body_type": data["body_type"],
+            "radius": data["radius"], "gsp": data["gsp"],
+            "minerals": data["minerals"],
+        })
+
+    # 植民地備蓄
+    col_names = ["Duranium","Neutronium","Corbomite","Tritanium","Boronide",
+                 "Mercassium","Vendarite","Sorium","Uridium","Corundium","Gallicite"]
+    cur.execute("""
+        SELECT PopName, Duranium, Neutronium, Corbomite, Tritanium, Boronide,
+            Mercassium, Vendarite, Sorium, Uridium, Corundium, Gallicite
+        FROM FCT_Population
+        WHERE GameID=? AND RaceID=? AND Population > 0
+        ORDER BY Population DESC
+    """, (game_id, race_id))
+    stockpiles = []
+    for r in cur.fetchall():
+        mins = {}
+        for i, name in enumerate(col_names):
+            val = r[name]
+            if val and val > 0:
+                mins[i + 1] = val
+        stockpiles.append({"pop_name": r["PopName"], "minerals": mins})
+
+    return {"bodies": result, "stockpiles": stockpiles, "orbital_diameter": orbital_diameter}
+
+
 def load_last_log_pos(base_dir, game_id):
     """前回の最終ログ位置を読み込む (Time, IncrementID)。ゲームIDが変わったらリセット"""
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
@@ -1350,7 +1443,154 @@ def _build_mining_html(mining_data, snapshot=None):
     )
 
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None, mining_data=None):
+def _build_minerals_html(mineral_deposits, mining_data=None):
+    if not mineral_deposits:
+        return '<div class="card" style="color:var(--text2);padding:20px;">鉱物データなし</div>'
+
+    bodies = mineral_deposits.get("bodies", [])
+    stockpiles = mineral_deposits.get("stockpiles", [])
+    orbital_diameter = mineral_deposits.get("orbital_diameter", 0)
+    mining_rate = mining_data["mining_rate"] if mining_data else 5
+
+    ORBITAL_CLASSES = {3, 5}
+
+    # ヘッダー
+    min_header = "".join(
+        '<th class="min-header" style="cursor:pointer;user-select:none" onclick="mnSort(' + str(i + 4) + ')">' + MINERAL_NAMES[mid] + '</th>'
+        for i, mid in enumerate(range(1, 12))
+    )
+
+    # DEPOSITSテーブル行
+    deposit_rows = ""
+    systems_seen = set()
+    for b in bodies:
+        systems_seen.add(b["system"])
+        orbital = (b["body_class"] in ORBITAL_CLASSES and orbital_diameter > 0
+                   and b["radius"] * 2 <= orbital_diameter)
+        orb_cell = ('<td class="mn-orb-ok" title="軌道採掘可能">⛏</td>' if orbital
+                    else '<td class="mn-orb-no"></td>')
+        gsp = b["gsp"]
+        gsp_cell = ('<td class="mn-gsp mn-gsp-r">' + str(gsp) + '</td>' if gsp > 0
+                    else '<td class="mn-gsp mn-gsp-d">✓</td>')
+        cells = ""
+        for mid in range(1, 12):
+            m = b["minerals"].get(mid)
+            if m:
+                amt = int(m["amount"])
+                acc = m["accessibility"]
+                acc_color = "#2ecc71" if acc >= 0.8 else ("#f39c12" if acc >= 0.5 else "#e74c3c")
+                gas_tag = ' 🪐' if (mid == 8 and b.get("body_type") == 4) else ''
+                cells += (
+                    '<td class="mn-cell has-min">'
+                    '<div class="mn-amount">' + f'{amt:,}' + gas_tag + '</div>'
+                    '<div class="mn-acc" style="color:' + acc_color + '">' + str(acc) + '</div>'
+                    '</td>'
+                )
+            else:
+                cells += '<td class="mn-cell">—</td>'
+        deposit_rows += (
+            '<tr>'
+            '<td class="mn-sys">' + b["system"] + '</td>'
+            '<td class="mn-body">' + b["body"] + '</td>'
+            + orb_cell + gsp_cell + cells +
+            '</tr>'
+        )
+
+    # STOCKPILEテーブル行
+    stk_header = "".join(
+        '<th class="min-header">' + MINERAL_NAMES[mid] + '</th>'
+        for mid in range(1, 12)
+    )
+    stk_rows = ""
+    for sp in stockpiles:
+        cells = ""
+        for mid in range(1, 12):
+            val = sp["minerals"].get(mid, 0)
+            cells += ('<td class="stk-cell has-stk">' + f'{int(val):,}' + '</td>' if val
+                      else '<td class="stk-cell">—</td>')
+        stk_rows += '<tr><td class="stk-pop">' + sp["pop_name"] + '</td>' + cells + '</tr>'
+    if not stk_rows:
+        stk_rows = '<tr><td colspan="12" style="color:var(--text2);padding:12px;">植民地データなし</td></tr>'
+
+    system_opts = '<option value="">全星系</option>' + "".join(
+        '<option value="' + s + '">' + s + '</option>'
+        for s in sorted(systems_seen)
+    )
+
+    js = """
+    (function(){
+      var mnTbody = document.getElementById('mn-tbody');
+      var mnRows = Array.from(mnTbody.querySelectorAll('tr'));
+      var mnCol = -1, mnDir = 1;
+      function mnSort(ci){
+        if(mnCol===ci) mnDir*=-1; else{mnCol=ci;mnDir=-1;}
+        mnRows.sort(function(a,b){
+          var ac=a.cells[ci],bc=b.cells[ci];
+          var av=ac?parseFloat((ac.querySelector('.mn-amount')||ac).textContent.replace(/[^\\d.]/g,'')):NaN;
+          var bv=bc?parseFloat((bc.querySelector('.mn-amount')||bc).textContent.replace(/[^\\d.]/g,'')):NaN;
+          if(isNaN(av)&&isNaN(bv))return 0; if(isNaN(av))return 1; if(isNaN(bv))return-1;
+          return(av-bv)*mnDir;
+        });
+        mnRows.forEach(function(r){mnTbody.appendChild(r);});
+      }
+      window.mnSort=mnSort;
+      document.querySelectorAll('.mn-acc').forEach(function(el){el.setAttribute('data-orig',el.textContent);});
+      window.mnFilter=function(){
+        var s=document.getElementById('mn-sys-sel').value;
+        mnRows.forEach(function(r){r.style.display=(!s||r.cells[0].textContent.trim()===s)?'':'none';});
+      };
+      window.mnCalc=function(){
+        var mines=parseInt(document.getElementById('mn-mine-cnt').value)||0;
+        var rate=""" + str(mining_rate) + """;
+        document.querySelectorAll('.mn-acc').forEach(function(el){
+          var acc=parseFloat(el.getAttribute('data-orig'));
+          if(isNaN(acc))return;
+          var yr=Math.round(mines*rate*acc);
+          el.textContent=yr.toLocaleString()+' t/yr';
+          el.style.color=yr>0?'#00c8ff':'#555';
+        });
+      };
+      window.mnReset=function(){
+        document.querySelectorAll('.mn-acc').forEach(function(el){
+          el.textContent=el.getAttribute('data-orig');
+          var v=parseFloat(el.textContent);
+          el.style.color=v>=0.8?'#2ecc71':(v>=0.5?'#f39c12':'#e74c3c');
+        });
+      };
+    })();
+    """
+
+    return (
+        '<div class="card">'
+        '<div class="mn-controls">'
+        '<label>星系: <select id="mn-sys-sel" onchange="mnFilter()">' + system_opts + '</select></label>'
+        '<label>自動鉱山 <input type="number" id="mn-mine-cnt" value="10" min="1" max="9999"> 台</label>'
+        '<button onclick="mnCalc()" style="background:#1a3a4a;color:var(--accent);border:1px solid var(--accent);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">全資源計算</button>'
+        '<button onclick="mnReset()" style="background:#1a1a1a;color:var(--text2);border:1px solid var(--border);padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">リセット</button>'
+        '<span class="mn-result">採掘レート: ' + str(mining_rate) + ' tons / 年</span>'
+        '</div>'
+        '<div style="overflow-x:auto">'
+        '<table><thead><tr>'
+        '<th onclick="mnSort(0)" style="cursor:pointer;user-select:none">星系</th>'
+        '<th onclick="mnSort(1)" style="cursor:pointer;user-select:none">天体名</th>'
+        '<th title="軌道採掘">⛏</th><th title="Ground Survey Potential">GSP</th>'
+        + min_header +
+        '</tr></thead>'
+        '<tbody id="mn-tbody">' + deposit_rows + '</tbody>'
+        '</table></div>'
+        '<div class="mn-section-hd">Colony Stockpiles</div>'
+        '<div style="overflow-x:auto">'
+        '<table><thead><tr>'
+        '<th style="text-align:left">植民地</th>' + stk_header +
+        '</tr></thead>'
+        '<tbody>' + stk_rows + '</tbody>'
+        '</table></div>'
+        '</div>'
+        '<script>' + js + '</script>'
+    )
+
+
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None, mining_data=None, mineral_deposits=None):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -1843,6 +2083,26 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
     .m-z { color: var(--text2); font-size: 11px; }
     .m-mine-badge { font-size: 10px; color: var(--text2); margin-left: 6px; background: var(--bg3); border: 1px solid var(--border); padding: 0 4px; border-radius: 2px; }
     .m-omm-badge { font-size: 10px; color: #00ff9d; background: #001a0d; border: 1px solid #00aa55; padding: 0 4px; border-radius: 2px; margin-left: 4px; cursor: help; }
+    .mn-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .mn-controls label { font-size: 12px; color: var(--text2); }
+    .mn-controls select, .mn-controls input[type=number] { background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+    .mn-controls input[type=number] { width: 80px; }
+    .mn-result { font-size: 12px; color: var(--accent2); }
+    .mn-cell { text-align: right; min-width: 88px; color: var(--text2); }
+    .mn-cell.has-min { color: var(--text); }
+    .mn-amount { font-size: 12px; }
+    .mn-acc { font-size: 10px; margin-top: 1px; }
+    .mn-sys { color: var(--text2); font-size: 11px; white-space: nowrap; }
+    .mn-body { font-family: 'Share Tech Mono', monospace; color: var(--accent); white-space: nowrap; }
+    .mn-orb-ok { text-align: center; color: #00ff9d; font-size: 14px; }
+    .mn-orb-no { text-align: center; color: var(--text2); }
+    .mn-gsp { text-align: center; font-size: 11px; min-width: 36px; }
+    .mn-gsp-r { color: #f39c12; font-weight: bold; }
+    .mn-gsp-d { color: #2ecc71; }
+    .stk-cell { text-align: right; min-width: 88px; font-size: 12px; color: var(--text2); }
+    .stk-cell.has-stk { color: var(--text); }
+    .stk-pop { font-family: 'Share Tech Mono', monospace; color: var(--accent); white-space: nowrap; }
+    .mn-section-hd { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--text2); letter-spacing: 1px; margin: 18px 0 8px; text-transform: uppercase; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
     """
 
     warn_class = " warn" if unexplored_jp > 5 else ""
@@ -1871,6 +2131,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<button class="tab-btn" onclick="showTab(\'army\',this)">ARMY</button>',
         '<button class="tab-btn" onclick="showTab(\'designs\',this)">DESIGNS</button>',
         '<button class="tab-btn" onclick="showTab(\'intel\',this)">' + L("intel_tab") + '</button>',
+        '<button class="tab-btn" onclick="showTab(\'minerals\',this)">MINERALS</button>',
         # TECH tab button intentionally hidden from nav (data/HTML kept for future use)
         '</div>',
 
@@ -1959,6 +2220,11 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         '<div id="tab-intel" class="tab-panel">',
         intel_html,
         '</div>',  # /tab-intel
+
+        # === MINERALS タブ ===
+        '<div id="tab-minerals" class="tab-panel">',
+        _build_minerals_html(mineral_deposits, mining_data),
+        '</div>',  # /tab-minerals
 
         # === TECH (コンポーネント) タブ ===
         '<div id="tab-components" class="tab-panel">',
@@ -2086,6 +2352,7 @@ def main():
     components        = get_components(conn, game_id, race_id)
     engine_techs      = get_engine_techs(conn, game_id, race_id)
     mining_data       = get_mining_data(conn, game_id, race_id)
+    mineral_deposits  = get_mineral_deposits(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -2112,7 +2379,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs, mining_data)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs, mining_data, mineral_deposits)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
