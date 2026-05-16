@@ -136,7 +136,7 @@ def make_body_name(row, parent_map):
 def get_db_path(db_arg=None):
     if db_arg:
         return db_arg
-    default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AuroraDB.db")
+    default = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "AuroraDB.db")
     if os.path.exists(default):
         return default
     print("使い方: python aurora_reader.py [AuroraDB.dbのパス]")
@@ -1815,7 +1815,7 @@ def main():
     race_id = race["RaceID"]
     print("帝国: " + race["RaceName"] + " (ID:" + str(race_id) + ")")
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # EN run is HTML-only; state files (log pos, snapshot) are managed by the JA run
     is_primary = (_LANG == "ja")
     snapshot          = load_mineral_snapshot(base_dir) if is_primary else None

@@ -5,8 +5,8 @@ echo   Aurora 4x Dashboard Generator
 echo ========================================
 echo.
 
-set SCRIPT_DASH="%~dp0aurora_reader.py"
-set SCRIPT_MIN="%~dp0aurora_minerals.py"
+set SCRIPT_DASH="%~dp0tools\aurora_reader.py"
+set SCRIPT_MIN="%~dp0tools\aurora_minerals.py"
 set DB="%~dp0AuroraDB.db"
 
 if not exist "%~dp0AuroraDB.db" (

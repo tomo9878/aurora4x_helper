@@ -525,5 +525,388 @@ function parseDesign() {
   document.getElementById('parse-result').style.display = 'block';
 }
 </script>
+
+<!-- ===== ミサイル設計計算ツール ===== -->
+<div style="margin-top:32px;border-top:1px solid var(--border);padding-top:24px;">
+<div style="font-family:'Share Tech Mono',monospace;font-size:16px;color:var(--accent);letter-spacing:3px;margin-bottom:4px;">[ MISSILE DESIGN CALCULATOR ]</div>
+<div style="font-size:11px;color:var(--text2);margin-bottom:18px;">目標速度からMSP配分を逆算 / 現在技術を選択して自動計算</div>
+
+<!-- 技術選択 -->
+<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;">
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:10px;color:var(--text2);letter-spacing:1px;">エンジン技術</label>
+    <select id="m-eng-tech" onchange="mCalc()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+      <option value="1.0">Conventional (1.0 EP/HS)</option>
+      <option value="5.0">Nuclear Radioisotope (5.0)</option>
+      <option value="6.4">Nuclear Thermal (6.4)</option>
+      <option value="8.0">Nuclear Pulse (8.0)</option>
+      <option value="10.0">Nuclear Gas-Core (10.0)</option>
+      <option value="12.5" selected>Ion Drive (12.5) ✓現在</option>
+      <option value="16.0">Magneto-plasma Drive (16.0)</option>
+      <option value="20.0">MCF Drive (20.0)</option>
+      <option value="25.0">ICF Drive (25.0)</option>
+      <option value="32.0">Solid-Core AM Drive (32.0)</option>
+    </select>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:10px;color:var(--text2);letter-spacing:1px;">最大ブースト技術（艦船用）</label>
+    <select id="m-max-boost-tech" onchange="mCalc()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+      <option value="1.0">x1.0</option>
+      <option value="1.25">x1.25</option>
+      <option value="1.5">x1.5</option>
+      <option value="1.75">x1.75</option>
+      <option value="2.0" selected>x2.0 ✓現在</option>
+      <option value="2.5">x2.5</option>
+      <option value="3.0">x3.0</option>
+    </select>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:10px;color:var(--text2);letter-spacing:1px;">燃料消費技術 (L/EPH)</label>
+    <select id="m-fuel-tech" onchange="mCalc()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+      <option value="1.0">1.0 L/EPH</option>
+      <option value="0.9">0.9</option>
+      <option value="0.8">0.8</option>
+      <option value="0.7">0.7</option>
+      <option value="0.6" selected>0.6 ✓現在</option>
+      <option value="0.5">0.5</option>
+      <option value="0.4">0.4</option>
+      <option value="0.3">0.3</option>
+      <option value="0.25">0.25</option>
+      <option value="0.2">0.2</option>
+    </select>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:10px;color:var(--text2);letter-spacing:1px;">弾頭強度技術</label>
+    <select id="m-warhead-tech" onchange="mCalc()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+      <option value="2">x2 Gun-Type Fission</option>
+      <option value="3">x3 Implosion Fission</option>
+      <option value="4" selected>x4 Levitated-Pit ✓現在</option>
+      <option value="5">x5 Fusion-boosted</option>
+      <option value="6">x6 Two-stage Thermo</option>
+      <option value="8">x8 Three-stage Thermo</option>
+      <option value="10">x10 Cobalt</option>
+      <option value="12">x12 Tri-Cobalt</option>
+      <option value="16">x16 AM Catalysed</option>
+      <option value="20">x20 Antimatter</option>
+      <option value="24">x24 Advanced AM</option>
+      <option value="30">x30 Gravatonic</option>
+    </select>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:4px;">
+    <label style="font-size:10px;color:var(--text2);letter-spacing:1px;">ATG技術</label>
+    <select id="m-atg-tech" onchange="mCalc()" style="background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:12px;">
+      <option value="1.0">なし (x1.0)</option>
+      <option value="1.15">+15% (x1.15)</option>
+      <option value="1.20" selected>+20% (x1.20) ✓現在</option>
+      <option value="1.25">+25%</option>
+      <option value="1.32">+32%</option>
+      <option value="1.40">+40%</option>
+      <option value="1.50">+50%</option>
+      <option value="1.60">+60%</option>
+    </select>
+  </div>
+</div>
+
+<!-- モード + 主要入力 -->
+<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+
+  <!-- 左: 入力パネル -->
+  <div style="flex:1;min-width:300px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px;">
+
+    <!-- モード切替 -->
+    <div style="margin-bottom:14px;display:flex;gap:16px;font-size:12px;">
+      <label style="cursor:pointer;color:var(--accent);">
+        <input type="radio" name="m-mode" value="reverse" checked onchange="mCalc()"> 逆算モード（速度→MSP）
+      </label>
+      <label style="cursor:pointer;color:var(--text2);">
+        <input type="radio" name="m-mode" value="forward" onchange="mCalc()"> 順算モード（MSP→速度）
+      </label>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+      <div>
+        <label style="font-size:10px;color:var(--text2);">総MSP</label>
+        <input type="number" id="m-total-msp" value="6" min="1" max="200" step="0.5" oninput="mCalc()"
+          style="width:100%;background:var(--bg3);border:1px solid var(--accent);color:var(--accent);padding:6px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:16px;text-align:right;">
+      </div>
+      <div id="m-speed-input-wrap">
+        <label style="font-size:10px;color:var(--text2);">目標速度 (km/s)</label>
+        <input type="number" id="m-target-speed" value="20000" min="1" step="500" oninput="mCalc()"
+          style="width:100%;background:var(--bg3);border:1px solid var(--accent2);color:var(--accent2);padding:6px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:16px;text-align:right;">
+      </div>
+      <div id="m-engine-input-wrap" style="display:none;">
+        <label style="font-size:10px;color:var(--text2);">エンジンMSP（手動）</label>
+        <input type="number" id="m-engine-msp-manual" value="3" min="0.1" max="199" step="0.1" oninput="mCalc()"
+          style="width:100%;background:var(--bg3);border:1px solid var(--accent2);color:var(--accent2);padding:6px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:16px;text-align:right;">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text2);">ブースト倍率</label>
+        <input type="number" id="m-boost" value="2" min="0.5" max="6" step="0.25" oninput="mCalc()"
+          style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-family:'Share Tech Mono',monospace;font-size:16px;text-align:right;">
+        <div id="m-boost-hint" style="font-size:10px;color:var(--text2);margin-top:2px;"></div>
+      </div>
+    </div>
+
+    <!-- MSP配分 -->
+    <div style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:12px;">
+      <div style="font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px;">MSP 配分</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div>
+          <label style="font-size:11px;color:var(--text2);">弾頭 MSP</label>
+          <input type="number" id="m-warhead-msp" value="1.5" min="0" max="199" step="0.1" oninput="mCalc()"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:13px;font-family:'Share Tech Mono',monospace;text-align:right;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);">燃料 MSP</label>
+          <input type="number" id="m-fuel-msp" value="1" min="0" max="199" step="0.1" oninput="mCalc()"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:13px;font-family:'Share Tech Mono',monospace;text-align:right;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);">センサー MSP（0.25以上で有効）</label>
+          <input type="number" id="m-sensor-msp" value="0.25" min="0" max="10" step="0.25" oninput="mCalc()"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:13px;font-family:'Share Tech Mono',monospace;text-align:right;">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text2);">命中率確認用・目標速度 (km/s)</label>
+          <input type="number" id="m-enemy-speed" value="5000" min="1" step="500" oninput="mCalc()"
+            style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:4px;font-size:13px;font-family:'Share Tech Mono',monospace;text-align:right;">
+        </div>
+      </div>
+    </div>
+
+    <!-- オプションコンポーネント -->
+    <div style="border-top:1px solid var(--border);padding-top:12px;">
+      <div style="font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:8px;">オプション（固定MSPコスト）</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:12px;">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+          <input type="checkbox" id="m-atg" onchange="mCalc()"> ATG <span style="color:var(--text2)">+0.25</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+          <input type="checkbox" id="m-ecm" onchange="mCalc()"> ECM <span style="color:var(--text2)">+0.25</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+          <input type="checkbox" id="m-eccm" onchange="mCalc()"> ECCM <span style="color:var(--text2)">+0.25</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+          <input type="checkbox" id="m-retarget" onchange="mCalc()"> リターゲティング <span style="color:var(--text2)">+0.5</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <span>デコイ</span>
+          <input type="number" id="m-decoys" value="0" min="0" max="10" step="1" oninput="mCalc()"
+            style="width:45px;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:3px 5px;border-radius:4px;font-size:12px;text-align:center;">
+          <span style="color:var(--text2)">個 ×0.5</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右: 結果パネル -->
+  <div style="flex:1;min-width:280px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px 18px;">
+    <div style="font-size:10px;color:var(--text2);letter-spacing:1px;margin-bottom:14px;">計算結果</div>
+
+    <!-- MSP バー -->
+    <div style="margin-bottom:16px;">
+      <div style="font-size:10px;color:var(--text2);margin-bottom:5px;">MSP 配分</div>
+      <div id="m-msp-bar" style="display:flex;height:18px;border-radius:4px;overflow:hidden;font-size:9px;"></div>
+      <div id="m-msp-legend" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;font-size:10px;"></div>
+    </div>
+
+    <!-- 速度 -->
+    <div id="m-result-speed" style="margin-bottom:12px;padding:10px 12px;background:var(--bg3);border-radius:6px;border-left:3px solid var(--accent2);">
+      <div style="font-size:10px;color:var(--text2);">速度</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:24px;color:var(--accent2);">—</div>
+    </div>
+
+    <!-- エンジンMSP -->
+    <div id="m-result-engine" style="margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;">
+      <div style="font-size:10px;color:var(--text2);">エンジンMSP / 割合</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:15px;color:var(--accent);">—</div>
+    </div>
+
+    <!-- 射程 -->
+    <div id="m-result-range" style="margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;">
+      <div style="font-size:10px;color:var(--text2);">最大射程</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:15px;color:var(--text);">—</div>
+    </div>
+
+    <!-- ダメージ -->
+    <div id="m-result-damage" style="margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;">
+      <div style="font-size:10px;color:var(--text2);">弾頭ダメージ</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:15px;color:var(--text);">—</div>
+    </div>
+
+    <!-- 命中率 -->
+    <div id="m-result-hit" style="margin-bottom:10px;padding:8px 12px;background:var(--bg3);border-radius:6px;">
+      <div style="font-size:10px;color:var(--text2);">命中率（vs 目標速度）</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:15px;color:var(--text);">—</div>
+    </div>
+
+    <!-- 警告 -->
+    <div id="m-warnings" style="font-size:11px;"></div>
+  </div>
+</div>
+</div>
+
+<script>
+// ===== ミサイル設計計算 =====
+function mGetMode() {
+  return document.querySelector('input[name="m-mode"]:checked').value;
+}
+
+function mCalc() {
+  const mode = mGetMode();
+  document.getElementById('m-speed-input-wrap').style.display  = mode === 'reverse' ? '' : 'none';
+  document.getElementById('m-engine-input-wrap').style.display = mode === 'forward' ? '' : 'none';
+
+  const totalMSP    = parseFloat(document.getElementById('m-total-msp').value) || 0;
+  const boost       = parseFloat(document.getElementById('m-boost').value) || 1;
+  const powerPerHS  = parseFloat(document.getElementById('m-eng-tech').value) || 1;
+  const maxBoostTech= parseFloat(document.getElementById('m-max-boost-tech').value) || 2;
+  const fuelEff     = parseFloat(document.getElementById('m-fuel-tech').value) || 1;
+  const warheadTech = parseFloat(document.getElementById('m-warhead-tech').value) || 2;
+  const atgMult     = parseFloat(document.getElementById('m-atg-tech').value) || 1.0;
+
+  const warheadMSP  = parseFloat(document.getElementById('m-warhead-msp').value) || 0;
+  const fuelMSP     = parseFloat(document.getElementById('m-fuel-msp').value) || 0;
+  const sensorMSP   = parseFloat(document.getElementById('m-sensor-msp').value) || 0;
+  const enemySpeed  = parseFloat(document.getElementById('m-enemy-speed').value) || 5000;
+
+  const useATG      = document.getElementById('m-atg').checked;
+  const useECM      = document.getElementById('m-ecm').checked;
+  const useECCM     = document.getElementById('m-eccm').checked;
+  const useRetarget = document.getElementById('m-retarget').checked;
+  const decoys      = parseInt(document.getElementById('m-decoys').value) || 0;
+
+  // ミサイル最大ブースト = 2 × 艦船最大ブースト
+  const missileMaxBoost = maxBoostTech * 2;
+  document.getElementById('m-boost-hint').textContent =
+    'ミサイル上限: ' + missileMaxBoost + 'x （艦船上限 ' + maxBoostTech + 'x の2倍）';
+
+  // 固定MSPコスト
+  const fixedMSP = (useATG ? 0.25 : 0) + (useECM ? 0.25 : 0) +
+                   (useECCM ? 0.25 : 0) + (useRetarget ? 0.5 : 0) + decoys * 0.5;
+  const allocMSP = warheadMSP + fuelMSP + sensorMSP + fixedMSP;
+
+  // エンジンMSP
+  let engineMSP;
+  if (mode === 'reverse') {
+    const targetSpeed = parseFloat(document.getElementById('m-target-speed').value) || 0;
+    engineMSP = (targetSpeed * totalMSP) / (powerPerHS * boost * 1000);
+  } else {
+    engineMSP = parseFloat(document.getElementById('m-engine-msp-manual').value) || 0;
+  }
+  engineMSP = Math.max(0, engineMSP);
+
+  const remainMSP = totalMSP - allocMSP - engineMSP;
+
+  // 速度
+  const speed = totalMSP > 0 ? (engineMSP / totalMSP) * powerPerHS * boost * 1000 : 0;
+
+  // High Boost Modifier（ペナルティはboost > maxBoostTech 艦船値で発動）
+  let hbm = 1;
+  if (boost > maxBoostTech) {
+    hbm = (((boost - maxBoostTech) / maxBoostTech) * 4) + 1;
+  }
+
+  // 射程計算
+  let rangeMkm = 0;
+  if (engineMSP > 0 && fuelMSP > 0 && speed > 0) {
+    const engineHS    = engineMSP / 20;
+    const engineEP    = engineHS * powerPerHS * boost;
+    const sizeMod     = Math.sqrt(10 / engineHS);
+    const fuelPerSec  = engineEP * fuelEff * sizeMod * hbm / 3600;
+    const fuelL       = fuelMSP * 2500;
+    const enduranceSec= fuelL / fuelPerSec;
+    rangeMkm = (speed * enduranceSec) / 1e6;
+  }
+
+  // ダメージ
+  const damage = warheadMSP * warheadTech;
+
+  // 命中率
+  const baseHit  = Math.min(1.0, 0.1 * speed / enemySpeed);
+  const finalHit = useATG ? Math.min(1.0, baseHit * atgMult) : baseHit;
+
+  // ===== 表示 =====
+
+  // MSPバー
+  const barEl  = document.getElementById('m-msp-bar');
+  const legEl  = document.getElementById('m-msp-legend');
+  const segments = [
+    { label: 'エンジン', val: engineMSP,  color: '#00c8ff' },
+    { label: '弾頭',     val: warheadMSP, color: '#e74c3c' },
+    { label: '燃料',     val: fuelMSP,    color: '#3498db' },
+    { label: 'センサー', val: sensorMSP,  color: '#9b59b6' },
+    { label: 'オプション',val: fixedMSP,  color: '#f39c12' },
+    { label: '残り',     val: Math.max(0, remainMSP), color: '#2d3a2d' },
+  ];
+  barEl.innerHTML = '';
+  legEl.innerHTML = '';
+  segments.forEach(s => {
+    if (s.val <= 0) return;
+    const pct = totalMSP > 0 ? (s.val / totalMSP * 100).toFixed(1) : 0;
+    const div = document.createElement('div');
+    div.style.cssText = 'flex:' + s.val + ';background:' + s.color + ';min-width:2px;';
+    div.title = s.label + ' ' + s.val.toFixed(2) + ' MSP';
+    barEl.appendChild(div);
+    legEl.innerHTML += '<span style="display:flex;align-items:center;gap:3px;">'
+      + '<span style="width:9px;height:9px;background:' + s.color + ';border-radius:2px;display:inline-block;"></span>'
+      + s.label + ' ' + s.val.toFixed(2) + '<span style="color:#666;font-size:9px;">(' + pct + '%)</span></span>';
+  });
+
+  // 速度
+  const speedOk = mode === 'forward' || engineMSP <= totalMSP;
+  document.getElementById('m-result-speed').querySelector('div:last-child').innerHTML =
+    '<span style="color:' + (speedOk ? 'var(--accent2)' : '#e74c3c') + '">'
+    + Math.round(speed).toLocaleString() + ' km/s</span>';
+
+  // エンジンMSP
+  const engPct = totalMSP > 0 ? (engineMSP / totalMSP * 100).toFixed(1) : 0;
+  document.getElementById('m-result-engine').querySelector('div:last-child').textContent =
+    engineMSP.toFixed(2) + ' MSP  (' + engPct + '%)';
+
+  // 射程
+  document.getElementById('m-result-range').querySelector('div:last-child').innerHTML =
+    fuelMSP > 0
+      ? '<span style="color:' + (hbm > 2 ? '#e74c3c' : 'var(--text)') + '">'
+        + rangeMkm.toFixed(1) + ' Mkm</span>'
+        + (hbm > 1 ? ' <span style="font-size:10px;color:#e74c3c;">HBM×' + hbm.toFixed(1) + '</span>' : '')
+      : '—（燃料MSP未設定）';
+
+  // ダメージ
+  document.getElementById('m-result-damage').querySelector('div:last-child').innerHTML =
+    warheadMSP > 0
+      ? damage.toFixed(1) + ' <span style="font-size:10px;color:var(--text2);">(' + warheadMSP + ' MSP × ' + warheadTech + ')</span>'
+      : '—';
+
+  // 命中率
+  document.getElementById('m-result-hit').querySelector('div:last-child').innerHTML =
+    '<span>Base: ' + (baseHit * 100).toFixed(0) + '%</span>'
+    + (useATG && atgMult > 1
+        ? ' → <span style="color:var(--accent2)">ATG後: ' + (finalHit * 100).toFixed(0) + '%</span>'
+        : '');
+
+  // 警告
+  let warns = [];
+  if (boost > missileMaxBoost)
+    warns.push('<div style="color:#e74c3c;">⚠ ブースト ' + boost + 'x はミサイル上限 ' + missileMaxBoost + 'x を超えています</div>');
+  if (hbm > 1 && hbm <= 2)
+    warns.push('<div style="color:#f39c12;">⚠ High Boost ペナルティ: 燃費 ×' + hbm.toFixed(1) + '</div>');
+  if (hbm > 2)
+    warns.push('<div style="color:#e74c3c;">⚠ High Boost ペナルティ: 燃費 ×' + hbm.toFixed(1) + '（射程大幅減）</div>');
+  if (speed > 0 && speed <= enemySpeed)
+    warns.push('<div style="color:#e74c3c;">⚠ 速度が目標速度以下 — 追いつけません</div>');
+  if (remainMSP < -0.001)
+    warns.push('<div style="color:#e74c3c;">⚠ MSP超過: ' + (-remainMSP).toFixed(2) + ' MSP オーバー</div>');
+  if (sensorMSP > 0 && sensorMSP < 0.25)
+    warns.push('<div style="color:#f39c12;">⚠ センサー 0.25MSP未満 — 効果なし</div>');
+  document.getElementById('m-warnings').innerHTML = warns.join('');
+}
+
+// ラジオ変更時に入力欄表示切替
+document.querySelectorAll('input[name="m-mode"]').forEach(r => r.addEventListener('change', mCalc));
+
+mCalc();
+</script>
 </body>
 </html>

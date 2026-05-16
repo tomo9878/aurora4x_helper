@@ -1,11 +1,12 @@
 *
-!aurora_reader.py
-!aurora_minerals.py
 !aurora_reader.bat
 !aurora_reader_en.bat
 !CLAUDE.md
 !README.md
 !.gitignore
+!tools
+!tools/**
+tools/__pycache__/
 !extras
 !extras/**
 !.github

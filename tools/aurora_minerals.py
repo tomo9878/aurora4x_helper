@@ -21,7 +21,7 @@ BASE_DATE = datetime.datetime(2025, 1, 1)
 def get_db_path():
     if len(sys.argv) > 1:
         return sys.argv[1]
-    default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "AuroraDB.db")
+    default = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "AuroraDB.db")
     if os.path.exists(default):
         return default
     print("使い方: python aurora_minerals.py [AuroraDB.dbのパス]")
@@ -406,7 +406,7 @@ def main():
     print("調査済み天体: " + str(len(bodies)) + " 件")
     conn.close()
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out_path = os.path.join(base_dir, "aurora_minerals.html")
 
     html = build_html(game, race, bodies, mining_rate, orbital_diameter)
