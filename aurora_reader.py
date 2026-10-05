@@ -60,6 +60,23 @@ LABELS = {
         "sc_per_engine_prefix": "→ エンジン",
         "sc_per_engine_mid": "基使用なら 1基あたり EP <b>",
         "sc_per_engine_suffix": "</b> 以上が必要",
+        "mc_title": "ミサイル設計計算",
+        "mc_size_label": "ミサイルサイズ (MSP)",
+        "mc_engine_label": "研究済みエンジン",
+        "mc_engine_msp_label": "エンジン (MSP)",
+        "mc_fuel_label": "燃料 (MSP)",
+        "mc_warhead_label": "弾頭 (MSP)",
+        "mc_result_speed": "速度",
+        "mc_result_range": "最大射程",
+        "mc_result_endurance": "飛行時間",
+        "mc_result_warhead": "弾頭威力",
+        "mc_warhead_mult_note": "現在の弾頭tech倍率: ",
+        "mc_msp_used": "使用MSP",
+        "mc_msp_over": "ミサイルサイズを超過しています",
+        "mc_no_engines": "研究済みミサイルエンジンなし",
+        "mc_target_speed_label": "目標速度 (km/s・任意)",
+        "mc_target_range_label": "目標射程 (km・任意)",
+        "mc_target_placeholder": "空欄=手動MSP使用",
         "intel_tab": "INTEL",
         "intel_card": "既知勢力インテリジェンス",
         "diplo_pts": "外交pt", "damage_dealt": "与ダメージ",
@@ -125,6 +142,23 @@ LABELS = {
         "sc_per_engine_prefix": "→ With ",
         "sc_per_engine_mid": " engine(s), each needs EP &ge; <b>",
         "sc_per_engine_suffix": "</b>",
+        "mc_title": "Missile Design Calculator",
+        "mc_size_label": "Missile Size (MSP)",
+        "mc_engine_label": "Researched Engine",
+        "mc_engine_msp_label": "Engine (MSP)",
+        "mc_fuel_label": "Fuel (MSP)",
+        "mc_warhead_label": "Warhead (MSP)",
+        "mc_result_speed": "Speed",
+        "mc_result_range": "Max Range",
+        "mc_result_endurance": "Flight Time",
+        "mc_result_warhead": "Warhead Strength",
+        "mc_warhead_mult_note": "Current warhead tech multiplier: ",
+        "mc_msp_used": "MSP Used",
+        "mc_msp_over": "Exceeds missile size",
+        "mc_no_engines": "No researched missile engines",
+        "mc_target_speed_label": "Target Speed (km/s, optional)",
+        "mc_target_range_label": "Target Range (km, optional)",
+        "mc_target_placeholder": "blank = use manual MSP",
     },
 }
 
@@ -908,6 +942,76 @@ def get_engine_techs(conn, game_id, race_id):
             engines.append({"name": name, "ep": ep})
     return engines
 
+def _tech_depth(conn, tech_id, _cache={}):
+    """Prerequisite1を遡ってtechの世代深度を求める（エンジン種別の新旧判定用）"""
+    if tech_id in _cache:
+        return _cache[tech_id]
+    depth = 0
+    seen = set()
+    cur = conn.cursor()
+    t = tech_id
+    while t and t != 0 and t not in seen:
+        seen.add(t)
+        cur.execute("SELECT Prerequisite1 FROM FCT_TechSystem WHERE TechSystemID=?", (t,))
+        row = cur.fetchone()
+        if not row or not row["Prerequisite1"]:
+            break
+        t = row["Prerequisite1"]
+        depth += 1
+    _cache[tech_id] = depth
+    return depth
+
+def get_missile_engines(conn, game_id, race_id):
+    """研究済み・使用可能なミサイルエンジンのうち、最新のエンジン種別×最新の出力世代のみ返す
+    （Nuclear Pulse→Gas-Core→Ion Drive…のように旧世代エンジン種別は実際の設計画面でも選ばれないため除外）
+    """
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT sdc.Name, sdc.Size, sdc.ComponentValue AS EP, sdc.FuelEfficiency, sdc.BGTech1
+        FROM FCT_ShipDesignComponents sdc
+        WHERE sdc.ComponentTypeID=56 AND sdc.GameID=?
+        AND EXISTS (SELECT 1 FROM FCT_RaceTech rt WHERE rt.GameID=sdc.GameID AND rt.RaceID=? AND rt.TechID=sdc.BGTech1 AND rt.Obsolete=0)
+        AND EXISTS (SELECT 1 FROM FCT_RaceTech rt WHERE rt.GameID=sdc.GameID AND rt.RaceID=? AND rt.TechID=sdc.BGTech2 AND rt.Obsolete=0)
+        ORDER BY sdc.ComponentValue
+    """, (game_id, race_id, race_id))
+    rows = cur.fetchall()
+    if not rows:
+        return []
+
+    # 1. 現在研究済みの中で最も世代の新しいエンジン種別(BGTech1)だけに絞る
+    depths = {r["BGTech1"]: _tech_depth(conn, r["BGTech1"]) for r in rows}
+    latest_bgtech1 = max(depths, key=depths.get)
+    rows = [r for r in rows if r["BGTech1"] == latest_bgtech1]
+
+    # 2. 同種別内でも出力Modの世代違い(EP/Size比)が混在するので、最新(最大比)だけに絞る
+    ratios = [r["EP"] / r["Size"] for r in rows if r["Size"]]
+    if ratios:
+        best_ratio = round(max(ratios), 2)
+        rows = [r for r in rows if r["Size"] and round(r["EP"] / r["Size"], 2) == best_ratio]
+
+    seen = set()
+    engines = []
+    for r in rows:
+        key = (round(r["EP"], 2), round(r["Size"], 3), round(r["FuelEfficiency"], 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        engines.append({"name": r["Name"], "ep": r["EP"], "size": r["Size"], "fuel_eff": r["FuelEfficiency"]})
+    return engines
+
+def get_warhead_multiplier(conn, game_id, race_id):
+    """現在の研究到達点での弾頭威力倍率（Strength: N x MSP の最大値）。未研究なら0"""
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT MAX(ts.AdditionalInfo) AS n
+        FROM FCT_RaceTech rt
+        JOIN FCT_TechSystem ts ON ts.TechSystemID=rt.TechID
+        WHERE rt.GameID=? AND rt.RaceID=? AND rt.Obsolete=0
+        AND ts.Name LIKE '%Warhead: Strength:%'
+    """, (game_id, race_id))
+    row = cur.fetchone()
+    return row["n"] if row and row["n"] is not None else 0
+
 def load_last_log_pos(base_dir, game_id):
     """前回の最終ログ位置を読み込む (Time, IncrementID)。ゲームIDが変わったらリセット"""
     pos_path = os.path.join(base_dir, "aurora_log_pos.txt")
@@ -1037,6 +1141,115 @@ def _build_speed_calc_html(ship_classes, engine_techs):
           'document.getElementById("sc-result").innerHTML=html;'
         '}'
         'document.addEventListener("DOMContentLoaded",function(){scCalc();});'
+        '</script>'
+    )
+
+def _build_missile_calc_html(missile_engines, warhead_mult):
+    import json
+
+    if not missile_engines:
+        return (
+            '<div class="card missile-calc-card">'
+            '<div class="card-title">' + L("mc_title") + '</div>'
+            '<p class="empty-note">' + L("mc_no_engines") + '</p>'
+            '</div>'
+        )
+
+    engine_json = json.dumps(missile_engines, ensure_ascii=False)
+    options = ""
+    for i, e in enumerate(missile_engines):
+        options += f'<option value="{i}">{e["name"]} ({e["size"]:.2f} MSP)</option>'
+
+    return (
+        '<div class="card missile-calc-card">'
+        '<div class="card-title">' + L("mc_title") + '</div>'
+        '<p class="empty-note">' + L("mc_warhead_mult_note") + str(warhead_mult) + '</p>'
+        '<div class="speed-calc-row">'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_size_label") + '</label>'
+            '<input type="number" id="mc-size" value="9" min="1" step="1" oninput="mcCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_engine_label") + '</label>'
+            '<select id="mc-engine" onchange="mcCalc()">' + options + '</select>'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_engine_msp_label") + '</label>'
+            '<input type="number" id="mc-engine-msp" value="1.5" min="0" step="0.1" oninput="mcCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_target_speed_label") + '</label>'
+            '<input type="number" id="mc-target-speed" value="" min="0" step="100" placeholder="' + L("mc_target_placeholder") + '" oninput="mcCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_fuel_label") + '</label>'
+            '<input type="number" id="mc-fuel" value="1.4" min="0" step="0.1" oninput="mcCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_target_range_label") + '</label>'
+            '<input type="number" id="mc-target-range" value="" min="0" step="1000" placeholder="' + L("mc_target_placeholder") + '" oninput="mcCalc()">'
+          '</div>'
+          '<div class="speed-calc-field">'
+            '<label class="sc-label">' + L("mc_warhead_label") + '</label>'
+            '<input type="number" id="mc-warhead" value="1.5" min="0" step="0.1" oninput="mcCalc()">'
+          '</div>'
+        '</div>'
+        '<div id="mc-result" class="sc-result"></div>'
+        '</div>'
+        '<script>'
+        'var MC_ENGINES=' + engine_json + ';'
+        'var MC_WARHEAD_MULT=' + json.dumps(warhead_mult) + ';'
+        'function mcCalc(){'
+          'var size=parseFloat(document.getElementById("mc-size").value)||0;'
+          'var idx=parseInt(document.getElementById("mc-engine").value)||0;'
+          'var eng=MC_ENGINES[idx];'
+          'var warheadMSP=parseFloat(document.getElementById("mc-warhead").value)||0;'
+          'var targetSpeedStr=document.getElementById("mc-target-speed").value.trim();'
+          'var targetRangeStr=document.getElementById("mc-target-range").value.trim();'
+          'var el=document.getElementById("mc-result");'
+          'if(!eng||size<=0){el.innerHTML="";return;}'
+          'var epPerMsp=eng.ep/eng.size;'
+          'var engineMspInput=document.getElementById("mc-engine-msp");'
+          'var fuelMspInput=document.getElementById("mc-fuel");'
+          'var engineMSP;'
+          'if(targetSpeedStr!==""){'
+            'var targetSpeed=parseFloat(targetSpeedStr)||0;'
+            'engineMSP=targetSpeed*size/(epPerMsp*20000);'
+            'engineMspInput.value=engineMSP.toFixed(3);'
+            'engineMspInput.disabled=true;'
+          '}else{'
+            'engineMspInput.disabled=false;'
+            'engineMSP=parseFloat(engineMspInput.value)||0;'
+          '}'
+          'var epTotal=epPerMsp*engineMSP;'
+          'var fuelMSP;'
+          'if(targetRangeStr!==""){'
+            'var targetRange=parseFloat(targetRangeStr)||0;'
+            'fuelMSP=targetRange*size*eng.fuel_eff/(20000*2500*3600);'
+            'fuelMspInput.value=fuelMSP.toFixed(3);'
+            'fuelMspInput.disabled=true;'
+          '}else{'
+            'fuelMspInput.disabled=false;'
+            'fuelMSP=parseFloat(fuelMspInput.value)||0;'
+          '}'
+          'var usedMSP=engineMSP+fuelMSP+warheadMSP;'
+          'var speed=epTotal*20000/size;'
+          'var fuelRequired=fuelMSP*2500;'
+          'var endurance=(epTotal>0)?fuelRequired*3600/(epTotal*eng.fuel_eff):0;'
+          'var maxRange=speed*endurance;'
+          'var warheadStrength=MC_WARHEAD_MULT*warheadMSP;'
+          'var over=usedMSP>size;'
+          'var html="<table class=\'sc-table\'><tbody>";'
+          'html+="<tr><td>' + L("mc_result_speed") + '</td><td style=\'text-align:right;font-family:monospace\'>"+speed.toLocaleString(undefined,{maximumFractionDigits:1})+" km/s</td></tr>";'
+          'html+="<tr><td>' + L("mc_result_range") + '</td><td style=\'text-align:right;font-family:monospace\'>"+Math.round(maxRange).toLocaleString()+" km</td></tr>";'
+          'html+="<tr><td>' + L("mc_result_endurance") + '</td><td style=\'text-align:right;font-family:monospace\'>"+(endurance/60).toFixed(1)+" min</td></tr>";'
+          'html+="<tr><td>' + L("mc_result_warhead") + '</td><td style=\'text-align:right;font-family:monospace\'>"+warheadStrength.toFixed(1)+"</td></tr>";'
+          'html+="<tr><td>' + L("mc_msp_used") + '</td><td style=\'text-align:right;font-family:monospace\'>"+usedMSP.toFixed(2)+" / "+size.toFixed(2)+(over?" ⚠":"")+"</td></tr>";'
+          'html+="</tbody></table>";'
+          'if(over){html+="<div class=\'sc-no-eng\'>' + L("mc_msp_over") + '</div>";}'
+          'el.innerHTML=html;'
+        '}'
+        'document.addEventListener("DOMContentLoaded",function(){mcCalc();});'
         '</script>'
     )
 
@@ -1336,7 +1549,7 @@ def _build_mining_html(mining_data, snapshot=None):
     )
 
 
-def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None, mining_data=None):
+def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored_jp, systems, ship_classes, ground_formations, snapshot=None, colony_candidates=None, alien_intel=None, components=None, engine_techs=None, mining_data=None, missile_engines=None, warhead_mult=0):
     game_name = game["GameName"]
     race_name = race["RaceName"]
     wealth = round(race["WealthPoints"])
@@ -1930,6 +2143,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
         # === DESIGNS タブ ===
         '<div id="tab-designs" class="tab-panel">',
         _build_speed_calc_html(ship_classes, engine_techs or []),
+        _build_missile_calc_html(missile_engines or [], warhead_mult),
         '<div class="card">',
         '<div class="card-title">Ship Designs</div>',
         '<div class="designs-controls">',
@@ -2072,6 +2286,8 @@ def main():
     components        = get_components(conn, game_id, race_id)
     engine_techs      = get_engine_techs(conn, game_id, race_id)
     mining_data       = get_mining_data(conn, game_id, race_id)
+    missile_engines   = get_missile_engines(conn, game_id, race_id)
+    warhead_mult      = get_warhead_multiplier(conn, game_id, race_id)
 
     # 前回の最終ログ位置を読み込み（JA実行のみ）
     if is_primary:
@@ -2098,7 +2314,7 @@ def main():
     html_path = os.path.join(base_dir, html_filename)
     log_path  = os.path.join(base_dir, "aurora_gamelog.txt")
 
-    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs, mining_data)
+    html = build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unexplored, systems, ship_classes, ground, snapshot, colony_candidates, alien_intel, components, engine_techs, mining_data, missile_engines, warhead_mult)
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     print("\n[OK] ダッシュボード: " + html_path)
