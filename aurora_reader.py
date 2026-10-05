@@ -45,6 +45,21 @@ LABELS = {
         "th_body": "天体名", "th_colony_cost": "入植コスト",
         "th_temp_c": "表面温度", "cost_exact": "実測", "cost_est": "概算",
         "no_candidates": "なし",
+        "sc_title": "速度・必要EP 計算",
+        "sc_class_label": "艦クラス（総トン）",
+        "sc_speed_label": "目標速度 (km/s)",
+        "sc_engines_label": "使用エンジン数（任意）",
+        "sc_engines_placeholder": "空欄=全候補表示",
+        "sc_required_ep": "必要合計EP",
+        "sc_table_engine": "研究済みエンジン",
+        "sc_table_ep_unit": "EP/基",
+        "sc_table_qty": "必要基数",
+        "sc_table_total_ep": "合計EP",
+        "sc_table_surplus": "余剰EP",
+        "sc_no_engines": "研究済みエンジンなし — エンジン設計後に再実行してください",
+        "sc_per_engine_prefix": "→ エンジン",
+        "sc_per_engine_mid": "基使用なら 1基あたり EP <b>",
+        "sc_per_engine_suffix": "</b> 以上が必要",
         "intel_tab": "INTEL",
         "intel_card": "既知勢力インテリジェンス",
         "diplo_pts": "外交pt", "damage_dealt": "与ダメージ",
@@ -95,6 +110,21 @@ LABELS = {
         "th_body": "Body", "th_colony_cost": "Col. Cost",
         "th_temp_c": "Surf. Temp", "cost_exact": "exact", "cost_est": "est.",
         "no_candidates": "None",
+        "sc_title": "Speed &amp; Required EP Calculator",
+        "sc_class_label": "Ship Class (Total Tons)",
+        "sc_speed_label": "Target Speed (km/s)",
+        "sc_engines_label": "No. of Engines (optional)",
+        "sc_engines_placeholder": "leave blank for all candidates",
+        "sc_required_ep": "Required Total EP",
+        "sc_table_engine": "Researched Engines",
+        "sc_table_ep_unit": "EP/unit",
+        "sc_table_qty": "Qty Needed",
+        "sc_table_total_ep": "Total EP",
+        "sc_table_surplus": "Surplus EP",
+        "sc_no_engines": "No researched engines — re-run after designing an engine",
+        "sc_per_engine_prefix": "→ With ",
+        "sc_per_engine_mid": " engine(s), each needs EP &ge; <b>",
+        "sc_per_engine_suffix": "</b>",
     },
 }
 
@@ -935,54 +965,10 @@ _COMP_FIELD_SHORT = {
     7: "防御", 8: "バイオ", 9: "地上部隊", 10: "部品設計",
 }
 
-def _build_speed_calc_html(ship_classes, engine_techs, simple=False):
+def _build_speed_calc_html(ship_classes, engine_techs):
     import json
 
-    if simple:
-        # 手入力モード: トン数・速度を手入力、EPのみ表示
-        return (
-            '<div class="card speed-calc-card">'
-            '<div class="card-title">Required EP Calculator</div>'
-            '<div class="speed-calc-row">'
-              '<div class="speed-calc-field">'
-                '<label class="sc-label">Total Tonnage (t)</label>'
-                '<input type="number" id="sc-tons" value="5000" min="1" step="500" oninput="scCalc()">'
-              '</div>'
-              '<div class="speed-calc-field">'
-                '<label class="sc-label">Target Speed (km/s)</label>'
-                '<input type="number" id="sc-speed" value="1000" min="1" step="100" oninput="scCalc()">'
-              '</div>'
-              '<div class="speed-calc-field">'
-                '<label class="sc-label">No. of Engines (optional)</label>'
-                '<input type="number" id="sc-engines" value="" min="1" step="1" placeholder="leave blank for EP only" oninput="scCalc()">'
-              '</div>'
-            '</div>'
-            '<div id="sc-result" class="sc-result"></div>'
-            '</div>'
-            '<script>'
-            'function scCalc(){'
-              'var tons=parseFloat(document.getElementById("sc-tons").value)||0;'
-              'var speed=parseFloat(document.getElementById("sc-speed").value)||0;'
-              'var nEngInput=document.getElementById("sc-engines").value.trim();'
-              'var el=document.getElementById("sc-result");'
-              'if(tons<=0||speed<=0){el.innerHTML="";return;}'
-              'var reqEP=speed*tons/50000;'
-              'var html="<div class=\'sc-req-ep\'>Required Total EP: <span class=\'sc-ep-val\'>"+reqEP.toFixed(2)+"</span>"'
-                '+"  <span class=\'sc-sub\'>("+speed.toLocaleString()+" km/s × "+tons.toLocaleString()+"t ÷ 50,000)</span></div>";'
-              'if(nEngInput!==""){'
-                'var n=parseInt(nEngInput);'
-                'if(n>=1){'
-                  'var epNeeded=reqEP/n;'
-                  'html+="<div class=\'sc-per-eng\'>→ With "+n+" engine(s), each needs EP ≥ <b>"+epNeeded.toFixed(2)+"</b></div>";'
-                '}'
-              '}'
-              'el.innerHTML=html;'
-            '}'
-            'document.addEventListener("DOMContentLoaded",function(){scCalc();});'
-            '</script>'
-        )
-
-    # DBリンクモード: 艦クラス選択 + 研究済みエンジン一覧
+    # 艦クラス選択 + 研究済みエンジン一覧（JA/EN共通、表示文言のみL()で切替）
     class_data = [
         {"name": c["ClassName"], "tons": round(c["Size"] * 50), "hs": round(c["Size"])}
         for c in ship_classes if not c.get("Obsolete")
@@ -1001,19 +987,19 @@ def _build_speed_calc_html(ship_classes, engine_techs, simple=False):
 
     return (
         '<div class="card speed-calc-card">'
-        '<div class="card-title">速度・必要EP 計算</div>'
+        '<div class="card-title">' + L("sc_title") + '</div>'
         '<div class="speed-calc-row">'
           '<div class="speed-calc-field">'
-            '<label class="sc-label">艦クラス（総トン）</label>'
+            '<label class="sc-label">' + L("sc_class_label") + '</label>'
             '<select id="sc-class" onchange="scCalc()">' + options + '</select>'
           '</div>'
           '<div class="speed-calc-field">'
-            '<label class="sc-label">目標速度 (km/s)</label>'
+            '<label class="sc-label">' + L("sc_speed_label") + '</label>'
             '<input type="number" id="sc-speed" value="1000" min="1" step="100" oninput="scCalc()">'
           '</div>'
           '<div class="speed-calc-field">'
-            '<label class="sc-label">使用エンジン数（任意）</label>'
-            '<input type="number" id="sc-engines" value="" min="1" step="1" placeholder="空欄=全候補表示" oninput="scCalc()">'
+            '<label class="sc-label">' + L("sc_engines_label") + '</label>'
+            '<input type="number" id="sc-engines" value="" min="1" step="1" placeholder="' + L("sc_engines_placeholder") + '" oninput="scCalc()">'
           '</div>'
         '</div>'
         '<div id="sc-result" class="sc-result"></div>'
@@ -1028,16 +1014,16 @@ def _build_speed_calc_html(ship_classes, engine_techs, simple=False):
           'var nEngInput=document.getElementById("sc-engines").value.trim();'
           'if(!cls||speed<=0){document.getElementById("sc-result").innerHTML="";return;}'
           'var reqEP=speed*cls.tons/50000;'
-          'var html="<div class=\'sc-req-ep\'>必要合計EP: <span class=\'sc-ep-val\'>" + reqEP.toFixed(2) + "</span>  <span class=\'sc-sub\'>("+speed.toLocaleString()+" km/s × "+cls.tons.toLocaleString()+"t ÷ 50,000)</span></div>";'
+          'var html="<div class=\'sc-req-ep\'>' + L("sc_required_ep") + ': <span class=\'sc-ep-val\'>" + reqEP.toFixed(2) + "</span>  <span class=\'sc-sub\'>("+speed.toLocaleString()+" km/s × "+cls.tons.toLocaleString()+"t ÷ 50,000)</span></div>";'
           'if(nEngInput!==""){'
             'var n=parseInt(nEngInput);'
             'if(n>=1){'
               'var epNeeded=reqEP/n;'
-              'html+="<div class=\'sc-per-eng\'>→ エンジン"+n+"基使用なら 1基あたり EP <b>"+epNeeded.toFixed(2)+"</b> 以上が必要</div>";'
+              'html+="<div class=\'sc-per-eng\'>' + L("sc_per_engine_prefix") + '"+n+"' + L("sc_per_engine_mid") + '"+epNeeded.toFixed(2)+"' + L("sc_per_engine_suffix") + '</div>";'
             '}'
           '}'
           'if(SC_ENGINES.length>0){'
-            'html+="<table class=\'sc-table\'><thead><tr><th>研究済みエンジン</th><th style=\'text-align:right\'>EP/基</th><th style=\'text-align:right\'>必要基数</th><th style=\'text-align:right\'>合計EP</th><th style=\'text-align:right\'>余剰EP</th></tr></thead><tbody>";'
+            'html+="<table class=\'sc-table\'><thead><tr><th>' + L("sc_table_engine") + '</th><th style=\'text-align:right\'>' + L("sc_table_ep_unit") + '</th><th style=\'text-align:right\'>' + L("sc_table_qty") + '</th><th style=\'text-align:right\'>' + L("sc_table_total_ep") + '</th><th style=\'text-align:right\'>' + L("sc_table_surplus") + '</th></tr></thead><tbody>";'
             'SC_ENGINES.forEach(function(e){'
               'var n=Math.ceil(reqEP/e.ep);'
               'var totalEP=n*e.ep;'
@@ -1046,7 +1032,7 @@ def _build_speed_calc_html(ship_classes, engine_techs, simple=False):
             '});'
             'html+="</tbody></table>";'
           '}else{'
-            'html+="<div class=\'sc-no-eng\'>研究済みエンジンなし — エンジン設計後に再実行してください</div>";'
+            'html+="<div class=\'sc-no-eng\'>' + L("sc_no_engines") + '</div>";'
           '}'
           'document.getElementById("sc-result").innerHTML=html;'
         '}'
@@ -1943,7 +1929,7 @@ def build_html(game, race, research, fleets, ships, tasks, shipyards, pops, unex
 
         # === DESIGNS タブ ===
         '<div id="tab-designs" class="tab-panel">',
-        _build_speed_calc_html(ship_classes, engine_techs or [], simple=(_LANG == "en")),
+        _build_speed_calc_html(ship_classes, engine_techs or []),
         '<div class="card">',
         '<div class="card-title">Ship Designs</div>',
         '<div class="designs-controls">',
