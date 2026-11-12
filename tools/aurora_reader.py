@@ -663,9 +663,17 @@ def get_colony_candidates(conn, game_id, race_id):
 
         body_ids = [b["SystemBodyID"] for b in uninhabited]
         ph2 = ",".join("?" * len(body_ids))
+        # v3.0 で有害ガスが呼吸ガス別の列になった（DangerousOxygen / DangerousMethane …）。
+        # 旧DB（Dangerous 列）にも対応する
+        gas_cols = {r[1] for r in cur.execute("PRAGMA table_info(DIM_Gases)").fetchall()}
+        if "Dangerous" in gas_cols:
+            danger_col = "g.Dangerous"
+        else:
+            suffix = {3: "Methane", 4: "Ammonia", 15: "Sulphur"}.get(sp["BreatheID"], "Oxygen")
+            danger_col = "g.Dangerous" + suffix
         cur.execute(f"""
             SELECT ag.SystemBodyID, ag.AtmosGasID, ag.GasAtm,
-                   g.Dangerous, g.DangerousLevel
+                   {danger_col} AS Dangerous
             FROM FCT_AtmosphericGas ag
             JOIN DIM_Gases g ON g.GasID=ag.AtmosGasID
             WHERE ag.GameID=? AND ag.SystemBodyID IN ({ph2})
